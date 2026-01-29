@@ -1,6 +1,6 @@
 /**
- * Vite Dev Server 管理器
- * 管理多个项目的 Vite 开发服务器进程
+ * Vite Dev Server Manager
+ * Manages multiple project Vite development server processes
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -13,8 +13,8 @@ import { dependencyManager } from './dependency-manager';
 const DEFAULT_CONFIG: ViteManagerConfig = {
   basePort: 5200,
   maxInstances: 20,
-  idleTimeout: 30 * 60 * 1000,  // 30 分钟
-  startupTimeout: 60 * 1000,    // 60 秒
+  idleTimeout: 30 * 60 * 1000,  // 30 minutes
+  startupTimeout: 60 * 1000,    // 60 seconds
 };
 
 export class ViteDevServerManager extends EventEmitter {
@@ -28,33 +28,33 @@ export class ViteDevServerManager extends EventEmitter {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
 
-    // 初始化端口池
+    // Initialize port pool
     for (let i = 0; i < this.config.maxInstances; i++) {
       this.portPool.add(this.config.basePort + i);
     }
 
-    // 启动空闲清理定时器
+    // Start idle cleanup timer
     this.cleanupTimer = setInterval(() => this.cleanupIdle(), 60 * 1000);
   }
 
   /**
-   * 启动项目的 Vite Dev Server
+   * Start Vite Dev Server for a project
    */
   async start(projectId: string, projectPath: string): Promise<ViteInstance> {
-    // 如果已运行，更新活跃时间并返回
+    // If already running, update active time and return
     const existing = this.instances.get(projectId);
     if (existing && existing.status === 'running') {
       existing.lastActive = new Date();
       return existing;
     }
 
-    // 分配端口
+    // Allocate port
     const port = this.allocatePort();
     if (port === null) {
       throw new Error('No available ports. Max instances reached.');
     }
 
-    // 创建实例
+    // Create instance
     const instance: ViteInstance = {
       projectId,
       port,
@@ -67,13 +67,13 @@ export class ViteDevServerManager extends EventEmitter {
     this.instances.set(projectId, instance);
 
     try {
-      // 确保 jsx-tagger 依赖已安装
+      // Ensure jsx-tagger dependency is installed
       await this.ensureJsxTaggerDependency(projectPath);
 
-      // 确保 vite.config 配置正确 (jsxTaggerPlugin, allowedHosts, base, hmr)
+      // Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
       await this.ensureViteConfig(projectId, projectPath);
 
-      // 启动 Vite 进程
+      // Start Vite process
       const proc = spawn(this.bunBinary, [
         'run', 'vite',
         '--host', '0.0.0.0',
@@ -87,10 +87,10 @@ export class ViteDevServerManager extends EventEmitter {
 
       instance.process = proc;
 
-      // 监听输出
+      // Listen to output
       this.setupProcessListeners(instance);
 
-      // 等待服务器就绪
+      // Wait for server to be ready
       await this.waitForReady(port);
 
       instance.status = 'running';
@@ -109,7 +109,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 停止项目的 Vite Dev Server
+   * Stop Vite Dev Server for a project
    */
   async stop(projectId: string): Promise<void> {
     const instance = this.instances.get(projectId);
@@ -117,10 +117,10 @@ export class ViteDevServerManager extends EventEmitter {
 
     instance.status = 'stopping';
 
-    // 优雅关闭
+    // Graceful shutdown
     instance.process.kill('SIGTERM');
 
-    // 等待进程退出 (最多 5 秒)
+    // Wait for process to exit (max 5 seconds)
     await Promise.race([
       new Promise<void>(resolve => {
         instance.process.on('exit', () => resolve());
@@ -144,7 +144,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 确保 jsx-tagger 依赖已安装
+   * Ensure jsx-tagger dependency is installed
    */
   private async ensureJsxTaggerDependency(projectPath: string): Promise<void> {
     const packageJsonPath = join(projectPath, 'package.json');
@@ -154,14 +154,14 @@ export class ViteDevServerManager extends EventEmitter {
       const content = await readFile(packageJsonPath, 'utf-8');
       const packageJson = JSON.parse(content);
 
-      // 检查是否已有 vite-plugin-jsx-tagger 依赖
+      // Check if vite-plugin-jsx-tagger dependency already exists
       const hasDep = packageJson.dependencies?.['vite-plugin-jsx-tagger'] ||
                      packageJson.devDependencies?.['vite-plugin-jsx-tagger'];
 
       if (!hasDep) {
         console.log(`[ViteManager] Adding vite-plugin-jsx-tagger dependency to package.json`);
 
-        // 添加到 devDependencies
+        // Add to devDependencies
         if (!packageJson.devDependencies) {
           packageJson.devDependencies = {};
         }
@@ -169,13 +169,13 @@ export class ViteDevServerManager extends EventEmitter {
 
         await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
 
-        // 删除 node_modules 并重新安装
+        // Delete node_modules and reinstall
         console.log(`[ViteManager] Reinstalling dependencies...`);
         const nodeModulesPath = join(projectPath, 'node_modules');
         try {
           await rm(nodeModulesPath, { recursive: true, force: true });
         } catch {
-          // node_modules 可能不存在
+          // node_modules may not exist
         }
 
         const result = await dependencyManager.install(projectPath);
@@ -191,13 +191,13 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 确保 vite.config 配置正确 (jsxTaggerPlugin, allowedHosts, base, hmr)
+   * Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
    */
   private async ensureViteConfig(projectId: string, projectPath: string): Promise<void> {
     const configPath = join(projectPath, 'vite.config.ts');
     const basePath = `/p/${projectId}/`;
     const idPrefix = projectId.slice(0, 8);
-    // fly-server 的公共域名，用于 HMR WebSocket 直连
+    // fly-server public domain for direct HMR WebSocket connection
     const flyPublicHost = process.env.FLY_PUBLIC_HOST || 'ai-site-preview.fly.dev';
     const isHttps = flyPublicHost.includes('fly.dev') || process.env.FLY_HTTPS === 'true';
 
@@ -205,43 +205,43 @@ export class ViteDevServerManager extends EventEmitter {
       let content = await readFile(configPath, 'utf-8');
       let modified = false;
 
-      // 0. 确保 jsxTaggerPlugin 被导入和使用 (用于可视化编辑)
+      // 0. Ensure jsxTaggerPlugin is imported and used (for visual editing)
       if (!content.includes('jsxTaggerPlugin')) {
-        // 添加 import
+        // Add import
         if (content.includes("from 'vite'")) {
           content = content.replace(
             /import\s*\{[^}]*\}\s*from\s*['"]vite['"]/,
             match => `${match}\nimport { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';`
           );
         } else {
-          // 在文件开头添加 import
+          // Add import at the beginning of the file
           content = `import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';\n${content}`;
         }
 
-        // 添加插件到 plugins 数组 (必须在 react() 之前)
+        // Add plugin to plugins array (must be before react())
         const jsxTaggerPluginConfig = `jsxTaggerPlugin({
       idPrefix: '${idPrefix}',
       removeInProduction: false,
     }),`;
 
         if (content.includes('plugins:')) {
-          // 在 plugins 数组开头添加
+          // Add at the beginning of plugins array
           content = content.replace(
             /plugins:\s*\[/,
-            `plugins: [\n    // JSX Tagger 必须在 React 插件之前\n    ${jsxTaggerPluginConfig}`
+            `plugins: [\n    // JSX Tagger must be before React plugin\n    ${jsxTaggerPluginConfig}`
           );
         }
         modified = true;
         console.log(`[ViteManager] Added jsxTaggerPlugin to vite.config.ts for visual editing`);
       }
 
-      // 1. 添加或更新 base 配置
+      // 1. Add or update base configuration
       if (content.includes('base:')) {
-        // 更新现有的 base 配置
+        // Update existing base configuration
         content = content.replace(/base:\s*['"][^'"]*['"]/, `base: '${basePath}'`);
         modified = true;
       } else if (content.includes('defineConfig({')) {
-        // 在 defineConfig 后添加 base
+        // Add base after defineConfig
         content = content.replace(
           /defineConfig\(\{/,
           `defineConfig({\n  base: '${basePath}',`
@@ -249,9 +249,9 @@ export class ViteDevServerManager extends EventEmitter {
         modified = true;
       }
 
-      // 2. 添加或更新 server 配置 (包括 allowedHosts 和 hmr)
-      // HMR 配置让 Vite client 直接连接到 fly-server，绕过 backend proxy
-      // 注意：path 使用完整路径，Vite 会直接使用这个路径（不会与 base 叠加）
+      // 2. Add or update server configuration (including allowedHosts and hmr)
+      // HMR configuration lets Vite client connect directly to fly-server, bypassing backend proxy
+      // Note: path uses full path, Vite will use this path directly (won't combine with base)
       const hmrConfig = `hmr: {
       protocol: '${isHttps ? 'wss' : 'ws'}',
       host: '${flyPublicHost}',
@@ -261,7 +261,7 @@ export class ViteDevServerManager extends EventEmitter {
     },`;
 
       if (content.includes('server:')) {
-        // server 配置已存在
+        // server configuration exists
         if (!content.includes('allowedHosts')) {
           content = content.replace(
             /server:\s*\{/,
@@ -269,17 +269,17 @@ export class ViteDevServerManager extends EventEmitter {
           );
           modified = true;
         }
-        // 更新或添加 hmr 配置
+        // Update or add hmr configuration
         if (content.includes('hmr:')) {
-          // 替换现有的 hmr 配置 (使用更健壮的正则，匹配嵌套大括号)
-          // 匹配 hmr: { ... } 包括多行和嵌套对象
+          // Replace existing hmr configuration (use more robust regex, match nested braces)
+          // Match hmr: { ... } including multiline and nested objects
           content = content.replace(
             /hmr:\s*\{[\s\S]*?overlay:\s*true,?\s*\},?[\s\n]*/,
             hmrConfig + '\n    '
           );
           modified = true;
         } else {
-          // 在 allowedHosts 后添加 hmr
+          // Add hmr after allowedHosts
           content = content.replace(
             /(allowedHosts:\s*['"][^'"]*['"],?)\s*/,
             `$1\n    ${hmrConfig}\n    `
@@ -287,7 +287,7 @@ export class ViteDevServerManager extends EventEmitter {
           modified = true;
         }
       } else if (content.includes('defineConfig({')) {
-        // 添加完整的 server 配置
+        // Add complete server configuration
         content = content.replace(
           /defineConfig\(\{/,
           `defineConfig({\n  server: {\n    allowedHosts: 'all',\n    ${hmrConfig}\n  },`
@@ -301,19 +301,19 @@ export class ViteDevServerManager extends EventEmitter {
       }
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
-      // 不阻止启动，继续尝试
+      // Don't block startup, continue trying
     }
   }
 
   /**
-   * 获取实例信息
+   * Get instance information
    */
   getInstance(projectId: string): ViteInstance | undefined {
     return this.instances.get(projectId);
   }
 
   /**
-   * 获取预览 URL
+   * Get preview URL
    */
   getPreviewUrl(projectId: string): string | null {
     const instance = this.instances.get(projectId);
@@ -322,7 +322,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 获取 HMR WebSocket URL
+   * Get HMR WebSocket URL
    */
   getHmrUrl(projectId: string): string | null {
     const instance = this.instances.get(projectId);
@@ -331,7 +331,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 标记活跃 (防止被清理)
+   * Mark as active (prevent cleanup)
    */
   markActive(projectId: string): void {
     const instance = this.instances.get(projectId);
@@ -341,7 +341,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 获取运行中的实例数
+   * Get count of running instances
    */
   getRunningCount(): number {
     return Array.from(this.instances.values())
@@ -350,7 +350,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 获取所有实例的状态
+   * Get status of all instances
    */
   getAllInstances(): Array<{ projectId: string; port: number; status: ViteStatus; lastActive: Date }> {
     return Array.from(this.instances.values()).map(i => ({
@@ -362,7 +362,7 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 销毁管理器
+   * Destroy manager
    */
   async destroy(): Promise<void> {
     if (this.cleanupTimer) {
@@ -370,7 +370,7 @@ export class ViteDevServerManager extends EventEmitter {
       this.cleanupTimer = null;
     }
 
-    // 停止所有实例
+    // Stop all instances
     const stopPromises = Array.from(this.instances.keys()).map(id => this.stop(id));
     await Promise.all(stopPromises);
   }
@@ -419,7 +419,7 @@ export class ViteDevServerManager extends EventEmitter {
       this.emit('exit', event);
 
       if (instance.status !== 'stopping' && instance.status !== 'stopped') {
-        // 非正常退出
+        // Abnormal exit
         console.error(`[ViteManager] Process exited unexpectedly: ${projectId}, code: ${code}`);
         this.releasePort(instance.port);
         this.instances.delete(projectId);
@@ -440,12 +440,12 @@ export class ViteDevServerManager extends EventEmitter {
         const response = await fetch(`http://localhost:${port}`, {
           method: 'HEAD',
         });
-        // Vite 可能返回 200 或 404 (当没有 index.html 时)
+        // Vite may return 200 or 404 (when there's no index.html)
         if (response.ok || response.status === 404) {
           return;
         }
       } catch {
-        // 服务器尚未就绪，继续等待
+        // Server not ready yet, continue waiting
       }
       await new Promise(r => setTimeout(r, 200));
     }
@@ -470,5 +470,5 @@ export class ViteDevServerManager extends EventEmitter {
   }
 }
 
-// 导出单例
+// Export singleton
 export const viteManager = new ViteDevServerManager();

@@ -1,12 +1,13 @@
 /**
- * 项目管理器
- * 统一管理项目的创建、更新、删除和预览
+ * Project Manager
+ * Unified management of project creation, update, deletion and preview
  */
 
 import { mkdir, writeFile, readFile, rm, readdir, stat } from 'fs/promises';
 import { join, dirname } from 'path';
 import { viteManager } from './vite-manager';
 import { dependencyManager } from './dependency-manager';
+import { templateManager } from './template-manager';
 import { generateScaffold, generateDefaultAppTsx } from './scaffolder';
 import type {
   ProjectConfig,
@@ -21,42 +22,73 @@ const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 
 export class ProjectManager {
   /**
-   * 创建新项目
+   * Create new project
+   * Optimization: Use template project to speed up creation (7-12s vs original 25-52s)
    */
   async createProject(config: ProjectConfig): Promise<CreateProjectResult> {
     const projectPath = this.getProjectPath(config.projectId);
+    const start = Date.now();
 
-    // 创建项目目录
-    await mkdir(projectPath, { recursive: true });
+    // Try to use template for fast creation (recommended)
+    if (templateManager.isReady()) {
+      console.log(`[ProjectManager] Using template for fast creation: ${config.projectId}`);
 
-    // 生成脚手架文件
-    const scaffold = generateScaffold(config);
-    if (!scaffold.success) {
-      throw new Error('Failed to generate scaffold');
+      // Copy from template (~3-5s, includes node_modules)
+      await templateManager.createFromTemplate(config.projectId);
+
+      // Write user's source code files
+      if (config.files && config.files.length > 0) {
+        for (const file of config.files) {
+          const filePath = join(projectPath, file.path);
+          await mkdir(dirname(filePath), { recursive: true });
+          await writeFile(filePath, file.content, 'utf-8');
+        }
+        console.log(`[ProjectManager] Wrote ${config.files.length} user files`);
+      } else {
+        // Write default App.tsx
+        const appPath = join(projectPath, 'src', 'App.tsx');
+        await writeFile(appPath, generateDefaultAppTsx(config.projectName), 'utf-8');
+      }
+
+      console.log(`[ProjectManager] Project created from template in ${Date.now() - start}ms`);
+    } else {
+      // Fallback to original method (slow, used when template is not ready)
+      console.log(`[ProjectManager] Template not ready, using slow path: ${config.projectId}`);
+
+      // Create project directory
+      await mkdir(projectPath, { recursive: true });
+
+      // Generate scaffold files
+      const scaffold = generateScaffold(config);
+      if (!scaffold.success) {
+        throw new Error('Failed to generate scaffold');
+      }
+
+      // Write scaffold files
+      for (const file of scaffold.files) {
+        const filePath = join(projectPath, file.path);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, file.content, 'utf-8');
+      }
+
+      // Write default App.tsx
+      const appPath = join(projectPath, 'src', 'App.tsx');
+      await writeFile(appPath, generateDefaultAppTsx(config.projectName), 'utf-8');
+
+      console.log(`[ProjectManager] Created project: ${config.projectId}`);
+
+      // Install dependencies (this is the slowest step, 20-45s)
+      const installResult = await dependencyManager.install(projectPath);
+      if (!installResult.success) {
+        console.error(`[ProjectManager] Failed to install dependencies:`, installResult.logs);
+        throw new Error('Failed to install dependencies');
+      }
     }
 
-    // 写入脚手架文件
-    for (const file of scaffold.files) {
-      const filePath = join(projectPath, file.path);
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, file.content, 'utf-8');
-    }
-
-    // 写入默认 App.tsx
-    const appPath = join(projectPath, 'src', 'App.tsx');
-    await writeFile(appPath, generateDefaultAppTsx(config.projectName), 'utf-8');
-
-    console.log(`[ProjectManager] Created project: ${config.projectId}`);
-
-    // 安装依赖
-    const installResult = await dependencyManager.install(projectPath);
-    if (!installResult.success) {
-      console.error(`[ProjectManager] Failed to install dependencies:`, installResult.logs);
-      throw new Error('Failed to install dependencies');
-    }
-
-    // 启动 Vite Dev Server
+    // Start Vite Dev Server (~2-5s)
     const instance = await viteManager.start(config.projectId, projectPath);
+
+    console.log(`[ProjectManager] Total creation time: ${Date.now() - start}ms`);
 
     return {
       projectPath,
@@ -67,7 +99,7 @@ export class ProjectManager {
   }
 
   /**
-   * 获取项目状态
+   * Get project status
    */
   async getStatus(projectId: string): Promise<ProjectStatus> {
     const projectPath = this.getProjectPath(projectId);
@@ -102,14 +134,14 @@ export class ProjectManager {
   }
 
   /**
-   * 更新项目文件
+   * Update project files
    */
   async updateFiles(projectId: string, updates: FileUpdate[]): Promise<void> {
     const projectPath = this.getProjectPath(projectId);
 
     for (const update of updates) {
       const filePath = join(projectPath, update.path);
-      // 默认为 'update' 操作（兼容后端不传 operation 字段的情况）
+      // Default to 'update' operation (compatible with backend not passing operation field)
       const operation = update.operation || 'update';
 
       switch (operation) {
@@ -125,18 +157,18 @@ export class ProjectManager {
             await rm(filePath);
             console.log(`[ProjectManager] Deleted: ${update.path}`);
           } catch {
-            // 文件可能不存在
+            // File may not exist
           }
           break;
       }
     }
 
-    // 标记项目活跃
+    // Mark project as active
     viteManager.markActive(projectId);
   }
 
   /**
-   * 读取项目文件
+   * Read project file
    */
   async readFile(projectId: string, filePath: string): Promise<string | null> {
     const fullPath = join(this.getProjectPath(projectId), filePath);
@@ -148,7 +180,7 @@ export class ProjectManager {
   }
 
   /**
-   * 列出项目文件
+   * List project files
    */
   async listFiles(projectId: string, subPath = ''): Promise<string[]> {
     const dirPath = join(this.getProjectPath(projectId), subPath);
@@ -160,7 +192,7 @@ export class ProjectManager {
       for (const entry of entries) {
         const relativePath = subPath ? `${subPath}/${entry.name}` : entry.name;
 
-        // 跳过 node_modules 和 .git
+        // Skip node_modules and .git
         if (entry.name === 'node_modules' || entry.name === '.git') continue;
 
         if (entry.isDirectory()) {
@@ -171,22 +203,22 @@ export class ProjectManager {
         }
       }
     } catch {
-      // 目录可能不存在
+      // Directory may not exist
     }
 
     return files;
   }
 
   /**
-   * 启动项目预览
+   * Start project preview
    */
   async startPreview(projectId: string): Promise<{ port: number; url: string }> {
     const projectPath = this.getProjectPath(projectId);
 
-    // 确保依赖已安装
+    // Ensure dependencies are installed
     await dependencyManager.install(projectPath);
 
-    // 启动 Vite
+    // Start Vite
     const instance = await viteManager.start(projectId, projectPath);
 
     return {
@@ -196,20 +228,20 @@ export class ProjectManager {
   }
 
   /**
-   * 停止项目预览
+   * Stop project preview
    */
   async stopPreview(projectId: string): Promise<void> {
     await viteManager.stop(projectId);
   }
 
   /**
-   * 删除项目
+   * Delete project
    */
   async deleteProject(projectId: string): Promise<void> {
-    // 停止 Vite
+    // Stop Vite
     await viteManager.stop(projectId);
 
-    // 删除项目目录
+    // Delete project directory
     const projectPath = this.getProjectPath(projectId);
     try {
       await rm(projectPath, { recursive: true, force: true });
@@ -243,7 +275,7 @@ export class ProjectManager {
   }
 
   /**
-   * 添加依赖
+   * Add dependency
    */
   async addDependency(projectId: string, packageName: string, isDev = false): Promise<void> {
     const projectPath = this.getProjectPath(projectId);
@@ -255,7 +287,7 @@ export class ProjectManager {
   }
 
   /**
-   * 移除依赖
+   * Remove dependency
    */
   async removeDependency(projectId: string, packageName: string): Promise<void> {
     const projectPath = this.getProjectPath(projectId);
@@ -267,16 +299,16 @@ export class ProjectManager {
   }
 
   /**
-   * 获取项目路径
+   * Get project path
    */
   getProjectPath(projectId: string): string {
-    // 安全检查：防止路径遍历
+    // Security check: Prevent path traversal
     const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, '');
     return join(DATA_DIR, safeId);
   }
 
   /**
-   * 统计文件数量
+   * Count files
    */
   private async countFiles(dirPath: string): Promise<number> {
     let count = 0;
@@ -294,7 +326,7 @@ export class ProjectManager {
         }
       }
     } catch {
-      // 忽略错误
+      // Ignore errors
     }
 
     return count;

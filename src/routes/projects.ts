@@ -1,22 +1,39 @@
 /**
- * 项目 API 路由
+ * Project API Routes
+ *
+ * All routes in this file require authentication via API Key + HMAC signature.
+ * The auth middleware stores the raw request body in context after verification.
  */
 
 import { Hono } from 'hono';
 import { projectManager } from '../services/project-manager';
-import { viteManager } from '../services/vite-manager';
 import type { ProjectConfig, FileUpdate, ApiResponse } from '../types';
 
 const app = new Hono();
 
 /**
- * POST /projects - 创建项目
+ * Helper to get parsed JSON body from context
+ * Auth middleware consumes the body for signature verification,
+ * so we retrieve it from the stored rawBody in context.
+ */
+function getBody<T>(c: { get: (key: string) => unknown }): T | null {
+  const rawBody = c.get('rawBody') as string | undefined;
+  if (!rawBody) return null;
+  try {
+    return JSON.parse(rawBody) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /projects - Create project
  */
 app.post('/', async (c) => {
   try {
-    const config = await c.req.json<ProjectConfig>();
+    const config = getBody<ProjectConfig>(c);
 
-    if (!config.projectId || !config.projectName) {
+    if (!config || !config.projectId || !config.projectName) {
       return c.json<ApiResponse>({
         success: false,
         error: 'Missing required fields: projectId, projectName',
@@ -39,7 +56,7 @@ app.post('/', async (c) => {
 });
 
 /**
- * GET /projects/:id - 获取项目状态
+ * GET /projects/:id - Get project status
  */
 app.get('/:id', async (c) => {
   try {
@@ -60,7 +77,7 @@ app.get('/:id', async (c) => {
 });
 
 /**
- * DELETE /projects/:id - 删除项目
+ * DELETE /projects/:id - Delete project
  */
 app.delete('/:id', async (c) => {
   try {
@@ -80,14 +97,14 @@ app.delete('/:id', async (c) => {
 });
 
 /**
- * PUT /projects/:id/files - 更新项目文件
+ * PUT /projects/:id/files - Update project files
  */
 app.put('/:id/files', async (c) => {
   try {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{ updates: FileUpdate[] }>();
+    const body = getBody<{ updates: FileUpdate[] }>(c);
 
-    if (!body.updates || !Array.isArray(body.updates)) {
+    if (!body || !body.updates || !Array.isArray(body.updates)) {
       return c.json<ApiResponse>({
         success: false,
         error: 'Missing or invalid updates array',
@@ -109,7 +126,7 @@ app.put('/:id/files', async (c) => {
 });
 
 /**
- * GET /projects/:id/files - 列出项目文件
+ * GET /projects/:id/files - List project files
  */
 app.get('/:id/files', async (c) => {
   try {
@@ -130,7 +147,7 @@ app.get('/:id/files', async (c) => {
 });
 
 /**
- * GET /projects/:id/files/:path - 读取单个文件
+ * GET /projects/:id/files/:path - Read single file
  */
 app.get('/:id/files/*', async (c) => {
   try {
@@ -167,7 +184,7 @@ app.get('/:id/files/*', async (c) => {
 });
 
 /**
- * POST /projects/:id/preview/start - 启动预览
+ * POST /projects/:id/preview/start - Start preview
  */
 app.post('/:id/preview/start', async (c) => {
   try {
@@ -188,7 +205,7 @@ app.post('/:id/preview/start', async (c) => {
 });
 
 /**
- * POST /projects/:id/preview/stop - 停止预览
+ * POST /projects/:id/preview/stop - Stop preview
  */
 app.post('/:id/preview/stop', async (c) => {
   try {
@@ -228,14 +245,14 @@ app.post('/:id/reinstall', async (c) => {
 });
 
 /**
- * POST /projects/:id/dependencies - 添加依赖
+ * POST /projects/:id/dependencies - Add dependency
  */
 app.post('/:id/dependencies', async (c) => {
   try {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{ package: string; dev?: boolean }>();
+    const body = getBody<{ package: string; dev?: boolean }>(c);
 
-    if (!body.package) {
+    if (!body || !body.package) {
       return c.json<ApiResponse>({
         success: false,
         error: 'Missing package name',
@@ -257,7 +274,7 @@ app.post('/:id/dependencies', async (c) => {
 });
 
 /**
- * DELETE /projects/:id/dependencies/:package - 移除依赖
+ * DELETE /projects/:id/dependencies/:package - Remove dependency
  */
 app.delete('/:id/dependencies/:package', async (c) => {
   try {

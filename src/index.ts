@@ -1,6 +1,6 @@
 /**
- * Fly-Server - 动态构建服务器
- * 支持 Vite Dev Server 进程管理和 HMR 代理
+ * Fly-Server - Dynamic Build Server
+ * Supports Vite Dev Server process management and HMR proxy
  */
 
 import { serve } from '@hono/node-server';
@@ -17,46 +17,51 @@ import healthRoutes from './routes/health';
 import { HmrWebSocketProxy } from './services/hmr-proxy';
 import { viteManager } from './services/vite-manager';
 import { projectManager } from './services/project-manager';
+import { templateManager } from './services/template-manager';
+import { authMiddleware } from './middleware/auth';
 
 const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// 创建 Hono 应用
+// Create Hono app
 const app = new Hono();
 
-// 中间件
+// Middleware
 app.use('*', cors());
 app.use('*', logger());
 
-// 路由
+// Routes
+// Apply auth middleware to /projects routes (requires API Key + HMAC signature)
+app.use('/projects/*', authMiddleware);
 app.route('/projects', projectRoutes);
+// Health routes are public (no auth required)
 app.route('/health', healthRoutes);
 app.get('/metrics', (c) => c.redirect('/health/metrics'));
 
-// 静态文件服务 - visual-edit-script (本地副本，从 packages/visual-editor 复制)
-// 部署前需要运行: cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/
+// Static file server - visual-edit-script (local copy from packages/visual-editor)
+// Before deployment, run: cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/
 app.use('/static/visual-edit-script.js', serveStatic({
   root: './static/injection',
   rewriteRequestPath: () => '/visual-edit-script.js',
 }));
 
-// HMR HTTP 路由 - 处理非 WebSocket 的 HMR 路径请求
-// Vite 客户端可能会先发送 HTTP 请求检测 HMR 端点是否可用
-// 如果返回 404，Vite 会触发全页刷新
-// 支持多种路径格式：
+// HMR HTTP route - Handle non-WebSocket HMR path requests
+// Vite client may first send HTTP request to check if HMR endpoint is available
+// If returns 404, Vite will trigger full page reload
+// Supports multiple path formats:
 //   - /hmr/{projectId}
 //   - /p/{projectId}/hmr/{projectId}
 //   - /api/proxy/{projectId}/hmr/{projectId}
-// 注意：必须跳过 WebSocket 升级请求，让 hmr-proxy 处理
+// Note: Must skip WebSocket upgrade requests, let hmr-proxy handle them
 app.get('*', async (c, next) => {
   const pathname = new URL(c.req.url).pathname;
   const hmrMatch = pathname.match(/\/hmr\/([0-9a-f-]{36})/);
 
   if (hmrMatch) {
-    // 检查是否是 WebSocket 升级请求
+    // Check if this is a WebSocket upgrade request
     const upgradeHeader = c.req.header('Upgrade');
     if (upgradeHeader?.toLowerCase() === 'websocket') {
-      // WebSocket 升级请求，跳过 HTTP 处理，让 server.on('upgrade') 处理
+      // WebSocket upgrade request, skip HTTP handling, let server.on('upgrade') handle it
       console.log(`[Server] HMR WebSocket upgrade request: ${pathname} (skipping HTTP handler)`);
       return next();
     }
@@ -64,26 +69,26 @@ app.get('*', async (c, next) => {
     const projectId = hmrMatch[1];
     console.log(`[Server] HMR HTTP request: ${pathname} (projectId: ${projectId})`);
 
-    // 返回空响应，非 WebSocket 的 HTTP 请求
+    // Return empty response for non-WebSocket HTTP requests
     return c.text('', 200);
   }
 
   return next();
 });
 
-// 处理不带尾随斜杠的项目预览路由 - 重定向到带斜杠的版本
-// 必须放在 wildcard 路由之前
+// Handle project preview route without trailing slash - redirect to version with slash
+// Must be placed before wildcard route
 app.get('/p/:projectId', (c) => {
   const projectId = c.req.param('projectId');
   return c.redirect(`/p/${projectId}/`);
 });
 
-// 项目预览代理 - 将 /p/{projectId}/* 转发到对应的 Vite Dev Server
+// Project preview proxy - Forward /p/{projectId}/* to corresponding Vite Dev Server
 app.all('/p/:projectId/*', async (c) => {
   const projectId = c.req.param('projectId');
   let instance = viteManager.getInstance(projectId);
 
-  // 如果 Vite 没有运行，尝试自动启动
+  // If Vite is not running, try to auto-start it
   if (!instance || instance.status !== 'running') {
     const status = await projectManager.getStatus(projectId);
 
@@ -91,7 +96,7 @@ app.all('/p/:projectId/*', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    // 项目存在但 Vite 没有运行，自动启动
+    // Project exists but Vite is not running, auto-start it
     console.log(`[Server] Auto-starting Vite for project: ${projectId}`);
     try {
       await projectManager.startPreview(projectId);
@@ -106,19 +111,19 @@ app.all('/p/:projectId/*', async (c) => {
     }
   }
 
-  // 获取完整路径 - Vite 配置了 base: '/p/{projectId}/'，需要转发完整路径
+  // Get full path - Vite is configured with base: '/p/{projectId}/', need to forward full path
   const fullPath = c.req.path;
   const queryString = new URL(c.req.url).search;
 
-  // 代理请求到 Vite Dev Server (保留完整路径)
+  // Proxy request to Vite Dev Server (preserve full path)
   const targetUrl = `http://localhost:${instance.port}${fullPath}${queryString}`;
 
   try {
-    // 创建新的请求头，设置 Host 为 localhost 以绕过 Vite 的 allowedHosts 检查
+    // Create new request headers, set Host to localhost to bypass Vite's allowedHosts check
     const proxyHeaders = new Headers();
     proxyHeaders.set('Host', `localhost:${instance.port}`);
     proxyHeaders.set('Origin', `http://localhost:${instance.port}`);
-    // 复制其他重要头部
+    // Copy other important headers
     const accept = c.req.header('Accept');
     if (accept) proxyHeaders.set('Accept', accept);
     const acceptEncoding = c.req.header('Accept-Encoding');
@@ -130,15 +135,15 @@ app.all('/p/:projectId/*', async (c) => {
       body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
     });
 
-    // 对于根路径的 HTML 请求，注入脚本
+    // For root path HTML requests, inject scripts
     const pathAfterProject = fullPath.replace(`/p/${projectId}`, '') || '/';
     if (pathAfterProject === '/' || pathAfterProject === '/index.html') {
       return await injectScripts(response, projectId);
     }
 
-    // 转发响应
+    // Forward response
     const responseHeaders = new Headers(response.headers);
-    // 移除可能导致问题的头部
+    // Remove headers that may cause issues
     responseHeaders.delete('content-encoding');
     responseHeaders.delete('content-length');
 
@@ -152,11 +157,11 @@ app.all('/p/:projectId/*', async (c) => {
   }
 });
 
-// 辅助函数：注入 <base> 标签和 visual-edit-script 到 HTML 响应
+// Helper function: Inject <base> tag and visual-edit-script into HTML response
 async function injectScripts(response: Response, projectId: string): Promise<Response> {
   const contentType = response.headers.get('content-type') || '';
 
-  // 只处理 HTML 响应
+  // Only process HTML responses
   if (!contentType.includes('text/html')) {
     return response;
   }
@@ -164,12 +169,12 @@ async function injectScripts(response: Response, projectId: string): Promise<Res
   let html = await response.text();
   const baseHref = `/p/${projectId}/`;
 
-  // 注入内容：base 标签 + visual-edit-script（主题监听已集成在 visual-edit-script 中）
+  // Inject content: base tag + visual-edit-script (theme listener is integrated in visual-edit-script)
   const injectedContent = `
     <base href="${baseHref}">
     <script type="module" src="/static/visual-edit-script.js"></script>`;
 
-  // 在 <head> 标签后注入
+  // Inject after <head> tag
   if (html.includes('<head>')) {
     html = html.replace('<head>', `<head>${injectedContent}`);
   } else if (html.includes('<HEAD>')) {
@@ -186,12 +191,12 @@ async function injectScripts(response: Response, projectId: string): Promise<Res
   });
 }
 
-// 根路由 - 欢迎页面
+// Root route - Welcome page
 app.get('/', async (c) => {
   const projectCount = await countProjects();
 
   return c.html(`<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -245,7 +250,7 @@ app.get('/', async (c) => {
 </html>`);
 });
 
-// 辅助函数：统计项目数量
+// Helper function: Count projects
 async function countProjects(): Promise<number> {
   try {
     await mkdir(DATA_DIR, { recursive: true });
@@ -256,19 +261,19 @@ async function countProjects(): Promise<number> {
   }
 }
 
-// HMR 代理实例
+// HMR proxy instance
 let hmrProxy: HmrWebSocketProxy | null = null;
 
-// 优雅关闭
+// Graceful shutdown
 async function shutdown(): Promise<void> {
   console.log('\n[Server] Shutting down...');
 
-  // 关闭 HMR 代理
+  // Close HMR proxy
   if (hmrProxy) {
     hmrProxy.close();
   }
 
-  // 关闭所有 Vite 实例
+  // Close all Vite instances
   await viteManager.destroy();
 
   console.log('[Server] Shutdown complete');
@@ -278,14 +283,22 @@ async function shutdown(): Promise<void> {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// 启动服务器
+// Start server
 async function start(): Promise<void> {
-  // 确保数据目录存在
+  // Ensure data directory exists
   await mkdir(DATA_DIR, { recursive: true });
+
+  // Initialize template project in background (speeds up subsequent project creation)
+  // Does not block server startup, but will be ready for first project creation
+  templateManager.initialize().then(() => {
+    console.log('[Server] Template project initialized (fast project creation enabled)');
+  }).catch((err) => {
+    console.error('[Server] Failed to initialize template (will use slow path):', err.message);
+  });
 
   const projectCount = await countProjects();
 
-  // 使用 Hono 的 Node.js 适配器
+  // Use Hono's Node.js adapter
   const server = serve({
     fetch: app.fetch,
     port: PORT,
@@ -303,7 +316,7 @@ async function start(): Promise<void> {
     `);
   });
 
-  // 初始化 HMR WebSocket 代理
+  // Initialize HMR WebSocket proxy
   hmrProxy = new HmrWebSocketProxy(server as Server, '/hmr');
 }
 

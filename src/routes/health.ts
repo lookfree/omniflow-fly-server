@@ -1,5 +1,5 @@
 /**
- * 健康检查和监控路由
+ * Health Check and Monitoring Routes
  */
 
 import { Hono } from 'hono';
@@ -9,7 +9,7 @@ import type { ApiResponse } from '../types';
 const app = new Hono();
 
 /**
- * GET /health - 基础健康检查
+ * GET /health - Basic health check
  */
 app.get('/', (c) => {
   return c.json({
@@ -19,7 +19,7 @@ app.get('/', (c) => {
 });
 
 /**
- * GET /health/ready - 就绪检查
+ * GET /health/ready - Readiness check
  */
 app.get('/ready', (c) => {
   return c.json({
@@ -29,7 +29,7 @@ app.get('/ready', (c) => {
 });
 
 /**
- * GET /health/live - 存活检查
+ * GET /health/live - Liveness check
  */
 app.get('/live', (c) => {
   return c.json({
@@ -39,7 +39,7 @@ app.get('/live', (c) => {
 });
 
 /**
- * GET /metrics - 服务指标
+ * GET /metrics - Service metrics
  */
 app.get('/metrics', (c) => {
   const instances = viteManager.getAllInstances();
@@ -66,7 +66,7 @@ app.get('/metrics', (c) => {
 });
 
 /**
- * GET /debug/instances - 调试：查看所有实例
+ * GET /debug/instances - Debug: View all instances
  */
 app.get('/debug/instances', (c) => {
   const instances = viteManager.getAllInstances();

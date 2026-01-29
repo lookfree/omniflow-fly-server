@@ -1,10 +1,10 @@
 /**
- * HMR WebSocket 代理
- * 将客户端 HMR 连接代理到对应项目的 Vite Dev Server
+ * HMR WebSocket Proxy
+ * Proxies client HMR connections to corresponding project Vite Dev Server
  *
- * 支持两种连接路径:
- * 1. /hmr?projectId=xxx - 外部 HMR 客户端 (如 PreviewFrame)
- * 2. /p/{projectId}/ - Vite 内部 HMR 客户端 (iframe 内的 /@vite/client)
+ * Supports two connection paths:
+ * 1. /hmr?projectId=xxx - External HMR clients (e.g., PreviewFrame)
+ * 2. /p/{projectId}/ - Vite internal HMR clients (/@vite/client inside iframe)
  */
 
 import { WebSocket, WebSocketServer } from 'ws';
@@ -21,7 +21,7 @@ export class HmrWebSocketProxy {
 
   constructor(server: Server, path: string = '/hmr') {
     this.server = server;
-    // 使用 noServer 模式，手动处理升级请求
+    // Use noServer mode, manually handle upgrade requests
     this.wss = new WebSocketServer({ noServer: true });
     this.setupServer();
     this.setupUpgradeHandler(path);
@@ -29,14 +29,14 @@ export class HmrWebSocketProxy {
   }
 
   /**
-   * 处理 HTTP 升级为 WebSocket 请求
+   * Handle HTTP upgrade to WebSocket requests
    */
   private setupUpgradeHandler(hmrPath: string): void {
     this.server.on('upgrade', (request: IncomingMessage, socket, head) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
       const pathname = url.pathname;
 
-      // 路径 1: /hmr?projectId=xxx - 外部 HMR 客户端
+      // Path 1: /hmr?projectId=xxx - External HMR clients
       if (pathname === hmrPath) {
         const projectId = url.searchParams.get('projectId');
         if (!projectId) {
@@ -52,11 +52,11 @@ export class HmrWebSocketProxy {
         return;
       }
 
-      // 路径 2: 任何包含 /hmr/{projectId} 的路径
-      // 支持多种格式:
-      //   - /hmr/{projectId} - 直接访问
-      //   - /p/{projectId}/hmr/{projectId} - 直连 fly-server (base + hmr.path)
-      //   - /api/proxy/{projectId}/hmr/{projectId} - 通过 backend proxy (proxy base + hmr.path)
+      // Path 2: Any path containing /hmr/{projectId}
+      // Supports multiple formats:
+      //   - /hmr/{projectId} - Direct access
+      //   - /p/{projectId}/hmr/{projectId} - Direct to fly-server (base + hmr.path)
+      //   - /api/proxy/{projectId}/hmr/{projectId} - Via backend proxy (proxy base + hmr.path)
       const hmrPathMatch = pathname.match(/\/hmr\/([0-9a-f-]{36})/);
       if (hmrPathMatch) {
         const projectId = hmrPathMatch[1];
@@ -76,8 +76,8 @@ export class HmrWebSocketProxy {
         return;
       }
 
-      // 路径 3: /p/{projectId}/ - Vite 内部 HMR 客户端（旧路径，保持向后兼容）
-      // 匹配 /p/{projectId}/@vite/client 或 /p/{projectId}/__vite_hmr 等 Vite HMR 路径
+      // Path 3: /p/{projectId}/ - Vite internal HMR clients (legacy path, backward compatible)
+      // Matches /p/{projectId}/@vite/client or /p/{projectId}/__vite_hmr and other Vite HMR paths
       const projectMatch = pathname.match(/^\/p\/([^/]+)\//);
       if (projectMatch) {
         const projectId = projectMatch[1];
@@ -90,8 +90,8 @@ export class HmrWebSocketProxy {
           return;
         }
 
-        // 直接代理到 Vite 的 WebSocket
-        // Vite HMR WebSocket 监听在根路径
+        // Directly proxy to Vite's WebSocket
+        // Vite HMR WebSocket listens on root path
         const viteWsUrl = `ws://localhost:${instance.port}`;
         console.log(`[HMR Proxy] Proxying Vite HMR: ${projectId} (client: ${pathname}) -> Vite WS at port ${instance.port}`);
 
@@ -99,12 +99,12 @@ export class HmrWebSocketProxy {
         return;
       }
 
-      // 其他路径不处理
+      // Other paths not handled
     });
   }
 
   /**
-   * 代理 WebSocket 连接到 Vite Dev Server (使用原始 socket 透传)
+   * Proxy WebSocket connection to Vite Dev Server (using raw socket passthrough)
    */
   private proxyViteWebSocket(
     request: IncomingMessage,
@@ -119,12 +119,12 @@ export class HmrWebSocketProxy {
 
     console.log(`[HMR Proxy] Creating TCP connection to Vite: ${host}:${port}`);
 
-    // 创建到 Vite 的原始 TCP 连接
+    // Create raw TCP connection to Vite
     const viteSocket: Socket = createConnection({ host, port }, () => {
       console.log(`[HMR Proxy] TCP connected to Vite: ${projectId}`);
 
-      // 构建 WebSocket 升级请求，转发给 Vite
-      // 注意：Vite HMR WebSocket 监听在根路径 /，不是客户端请求的路径
+      // Build WebSocket upgrade request, forward to Vite
+      // Note: Vite HMR WebSocket listens on root path /, not the client request path
       const upgradeRequest = [
         `GET / HTTP/1.1`,
         `Host: ${host}:${port}`,
@@ -143,11 +143,11 @@ export class HmrWebSocketProxy {
       }
     });
 
-    // 双向管道
+    // Bidirectional pipe
     viteSocket.on('connect', () => {
-      // 连接成功，清除超时
+      // Connection successful, clear timeout
       viteSocket.setTimeout(0);
-      // 当收到 Vite 的响应时，转发给客户端
+      // When receiving Vite's response, forward to client
       viteSocket.pipe(clientSocket);
       clientSocket.pipe(viteSocket);
       console.log(`[HMR Proxy] WebSocket proxy established: ${projectId}`);
@@ -175,7 +175,7 @@ export class HmrWebSocketProxy {
       viteSocket.destroy();
     });
 
-    // 5 秒超时
+    // 5 second timeout
     viteSocket.setTimeout(5000, () => {
       console.error(`[HMR Proxy] Vite connection timeout: ${projectId}`);
       viteSocket.destroy();
@@ -185,13 +185,13 @@ export class HmrWebSocketProxy {
   }
 
   /**
-   * 处理外部 HMR 客户端连接 (如 PreviewFrame)
+   * Handle external HMR client connection (e.g., PreviewFrame)
    */
   private handleExternalClient(ws: WebSocket, projectId: string): void {
     console.log(`[HMR Proxy] External client connected: ${projectId}`);
     this.addClient(projectId, ws);
 
-    // 立即发送 connected 消息，告知客户端连接成功
+    // Immediately send connected message to notify client connection successful
     ws.send(JSON.stringify({ type: 'connected' }));
 
     ws.on('message', (data) => {
@@ -220,10 +220,10 @@ export class HmrWebSocketProxy {
     }
     this.clients.get(projectId)!.add(ws);
 
-    // 确保连接到 Vite
+    // Ensure connected to Vite
     this.ensureViteConnection(projectId);
 
-    // 标记项目活跃
+    // Mark project as active
     viteManager.markActive(projectId);
   }
 
@@ -232,7 +232,7 @@ export class HmrWebSocketProxy {
     if (clients) {
       clients.delete(ws);
 
-      // 如果没有客户端了，断开 Vite 连接
+      // If no clients left, disconnect Vite connection
       if (clients.size === 0) {
         this.clients.delete(projectId);
         this.disconnectVite(projectId);
@@ -251,7 +251,7 @@ export class HmrWebSocketProxy {
       return;
     }
 
-    // Vite HMR WebSocket 监听在根路径 /，不是 /__vite_hmr
+    // Vite HMR WebSocket listens on root path /, not /__vite_hmr
     const viteWsUrl = hmrUrl;
 
     try {
@@ -308,7 +308,7 @@ export class HmrWebSocketProxy {
   }
 
   /**
-   * 主动推送 HMR 更新
+   * Actively push HMR updates
    */
   pushUpdate(projectId: string, message: HmrMessage): void {
     const data = JSON.stringify(message);
@@ -323,30 +323,30 @@ export class HmrWebSocketProxy {
   }
 
   /**
-   * 获取连接的客户端数
+   * Get connected client count
    */
   getClientCount(projectId: string): number {
     return this.clients.get(projectId)?.size ?? 0;
   }
 
   /**
-   * 获取所有连接的项目
+   * Get all connected projects
    */
   getConnectedProjects(): string[] {
     return Array.from(this.clients.keys());
   }
 
   /**
-   * 关闭代理
+   * Close proxy
    */
   close(): void {
-    // 关闭所有 Vite 连接
+    // Close all Vite connections
     for (const ws of this.viteConnections.values()) {
       ws.close();
     }
     this.viteConnections.clear();
 
-    // 关闭所有客户端连接
+    // Close all client connections
     for (const clients of this.clients.values()) {
       for (const client of clients) {
         client.close();
@@ -354,7 +354,7 @@ export class HmrWebSocketProxy {
     }
     this.clients.clear();
 
-    // 关闭 WebSocket 服务器
+    // Close WebSocket server
     this.wss.close();
     console.log('[HMR Proxy] Closed');
   }

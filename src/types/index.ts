@@ -1,13 +1,13 @@
 /**
- * Fly-Server 类型定义
+ * Fly-Server Type Definitions
  */
 
 import type { ChildProcess } from 'child_process';
 
-/** Vite 实例状态 */
+/** Vite instance status */
 export type ViteStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
 
-/** Vite Dev Server 实例 */
+/** Vite Dev Server instance */
 export interface ViteInstance {
   projectId: string;
   port: number;
@@ -17,7 +17,7 @@ export interface ViteInstance {
   status: ViteStatus;
 }
 
-/** Vite 管理器配置 */
+/** Vite manager configuration */
 export interface ViteManagerConfig {
   basePort: number;
   maxInstances: number;
@@ -25,21 +25,23 @@ export interface ViteManagerConfig {
   startupTimeout: number;
 }
 
-/** 项目配置 */
+/** Project configuration */
 export interface ProjectConfig {
   projectId: string;
   projectName: string;
-  description: string;
+  description?: string;
+  /** User's source code files (optional, used to override template) */
+  files?: ProjectFile[];
 }
 
-/** 项目文件 */
+/** Project file */
 export interface ProjectFile {
   path: string;
   content: string;
   language?: 'tsx' | 'ts' | 'css' | 'json' | 'html';
 }
 
-/** 项目状态 */
+/** Project status */
 export interface ProjectStatus {
   exists: boolean;
   devServerRunning: boolean;
@@ -48,53 +50,53 @@ export interface ProjectStatus {
   lastModified?: Date;
 }
 
-/** 文件更新操作 */
+/** File update operation */
 export interface FileUpdate {
   path: string;
   content: string;
   operation: 'create' | 'update' | 'delete';
 }
 
-/** 依赖安装结果 */
+/** Dependency installation result */
 export interface InstallResult {
   success: boolean;
   duration: number;
   logs: string[];
 }
 
-/** HMR 消息 */
+/** HMR message */
 export interface HmrMessage {
   type: string;
   [key: string]: unknown;
 }
 
-/** 日志事件 */
+/** Log event */
 export interface LogEvent {
   projectId: string;
   type: 'stdout' | 'stderr';
   message: string;
 }
 
-/** 退出事件 */
+/** Exit event */
 export interface ExitEvent {
   projectId: string;
   code: number | null;
 }
 
-/** 脚手架生成结果 */
+/** Scaffold generation result */
 export interface ScaffoldResult {
   success: boolean;
   files: Array<{ path: string; content: string }>;
 }
 
-/** API 响应 */
+/** API response */
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
 }
 
-/** 项目创建结果 */
+/** Project creation result */
 export interface CreateProjectResult {
   projectPath: string;
   port: number;

@@ -1,6 +1,6 @@
 /**
- * 依赖管理器
- * 使用 Bun 安装和管理项目依赖
+ * Dependency Manager
+ * Use Bun to install and manage project dependencies
  */
 
 import { spawn } from 'child_process';
@@ -13,20 +13,20 @@ export class DependencyManager {
   private installing: Map<string, Promise<InstallResult>> = new Map();
 
   /**
-   * 安装项目依赖
+   * Install project dependencies
    */
   async install(projectPath: string): Promise<InstallResult> {
-    // 检查是否已安装
+    // Check if already installed
     const nodeModulesPath = join(projectPath, 'node_modules');
     try {
       await access(nodeModulesPath, constants.F_OK);
       console.log(`[DependencyManager] Already installed: ${projectPath}`);
       return { success: true, duration: 0, logs: ['Dependencies already installed'] };
     } catch {
-      // 需要安装
+      // Need to install
     }
 
-    // 避免重复安装 (同一项目)
+    // Avoid duplicate installation (same project)
     const existing = this.installing.get(projectPath);
     if (existing) {
       console.log(`[DependencyManager] Waiting for existing install: ${projectPath}`);
@@ -52,7 +52,7 @@ export class DependencyManager {
       const proc = spawn(this.bunBinary, ['install'], {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, CI: 'true' },  // 非交互模式
+        env: { ...process.env, CI: 'true' },  // Non-interactive mode
       });
 
       proc.stdout?.on('data', (data: Buffer) => {
@@ -95,7 +95,7 @@ export class DependencyManager {
   }
 
   /**
-   * 添加新依赖
+   * Add new dependency
    */
   async addPackage(
     projectPath: string,
@@ -140,7 +140,7 @@ export class DependencyManager {
   }
 
   /**
-   * 移除依赖
+   * Remove dependency
    */
   async removePackage(projectPath: string, packageName: string): Promise<InstallResult> {
     const start = Date.now();
@@ -194,7 +194,7 @@ export class DependencyManager {
   }
 
   /**
-   * 检查依赖是否已安装
+   * Check if dependencies are installed
    */
   async isInstalled(projectPath: string): Promise<boolean> {
     const nodeModulesPath = join(projectPath, 'node_modules');
