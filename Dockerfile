@@ -11,10 +11,17 @@ RUN bun install
 # 复制源代码（包括 static/injection/visual-edit-script.js）
 COPY . .
 
-# 复制并构建 vite-plugin-jsx-tagger
+# Build vite-plugin-jsx-tagger
 COPY packages/vite-plugin-jsx-tagger /app/packages/vite-plugin-jsx-tagger
 WORKDIR /app/packages/vite-plugin-jsx-tagger
 RUN bun install && bun run build
+
+# Build visual-editor and copy to static/injection
+COPY packages/visual-editor /app/packages/visual-editor
+WORKDIR /app/packages/visual-editor
+RUN bun install && bun run build
+RUN mkdir -p /app/static/injection && cp dist/injection/visual-edit-script.js /app/static/injection/
+
 WORKDIR /app
 
 # 创建数据目录

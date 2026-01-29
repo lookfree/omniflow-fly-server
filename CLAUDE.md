@@ -39,11 +39,13 @@ The visual editing feature depends on two core packages in the `packages/` direc
 
 ```
 packages/
-├── vite-plugin-jsx-tagger/   # JSX element tagging plugin
-│   └── src/index.ts          # Vite plugin, adds data-jsx-* attributes to JSX
-└── visual-editor/            # Visual editor core
+├── vite-plugin-jsx-tagger/           # JSX element tagging plugin
+│   └── src/index.ts                  # Vite plugin, adds data-jsx-* attributes to JSX
+└── visual-editor/                    # Visual editor core
+    ├── src/injection/
+    │   └── visual-edit-script.ts     # TypeScript source
     └── dist/injection/
-        └── visual-edit-script.js  # Script injected into preview pages
+        └── visual-edit-script.js     # Built script injected into preview pages
 ```
 
 ### vite-plugin-jsx-tagger
@@ -140,15 +142,21 @@ bun run typecheck
 ## Deployment
 
 ```bash
-# 1. If packages/visual-editor was modified, build and copy injection script first
-cd ../packages/visual-editor && bun run build
-cp dist/injection/visual-edit-script.js ../fly-server/static/injection/
+# Deploy to Fly.io (automatically builds visual-editor and copies to static/injection)
+bun run deploy
 
-# 2. Deploy to Fly.io
-cd ../fly-server && fly deploy
+# Or manually:
+# 1. Build visual-editor package
+cd packages/visual-editor && bun install && bun run build && cd ../..
+
+# 2. Copy built script to static/injection
+mkdir -p static/injection && cp packages/visual-editor/dist/injection/visual-edit-script.js static/injection/
+
+# 3. Deploy
+fly deploy --remote-only
 ```
 
-**Important**: After modifying `packages/visual-editor/injection/visual-edit-script.ts`, you must manually copy to `fly-server/static/injection/` before deploying.
+**Note**: The `bun run deploy` command handles all build steps automatically.
 
 ## Architecture
 
@@ -198,11 +206,11 @@ cd ../fly-server && fly deploy
 
 - **Package dependency builds**: Build workspace packages before local development:
   ```bash
-  cd ../packages/vite-plugin-jsx-tagger && bun run build
-  cd ../packages/visual-editor && bun run build
+  cd packages/vite-plugin-jsx-tagger && bun install && bun run build
+  cd ../visual-editor && bun install && bun run build
   ```
 - Project directories are located at `/data/sites/{projectId}` in container
 - Vite process starts on first project access
 - HMR WebSocket requires proper cross-origin configuration
 - Logs use `[Server]`, `[Vite]`, `[HMR]` prefixes
-- After modifying `visual-editor` package, rebuild and redeploy fly-server
+- After modifying `visual-editor` package, run `bun run deploy` to rebuild and redeploy

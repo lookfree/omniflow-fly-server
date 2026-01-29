@@ -10,7 +10,7 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --noEmit",
-    "predeploy": "mkdir -p static/injection && cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/",
+    "predeploy": "cd packages/visual-editor && bun install && bun run build && cd ../.. && mkdir -p static/injection && cp packages/visual-editor/dist/injection/visual-edit-script.js static/injection/",
     "deploy": "bun run predeploy && fly deploy --remote-only"
   },
   "dependencies": {

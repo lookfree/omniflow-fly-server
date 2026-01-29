@@ -1,0 +1,16 @@
+{
+  "name": "@omniflow/visual-editor",
+  "version": "1.0.0",
+  "description": "Visual editor injection script for Omniflow preview",
+  "type": "module",
+  "main": "dist/injection/visual-edit-script.js",
+  "types": "dist/injection/visual-edit-script.d.ts",
+  "scripts": {
+    "build": "tsup src/injection/visual-edit-script.ts --format esm --dts --clean --out-dir dist/injection",
+    "dev": "tsup src/injection/visual-edit-script.ts --format esm --dts --watch --out-dir dist/injection"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
