@@ -1,0 +1,40 @@
+app = "omniflow-preview"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[env]
+  NODE_ENV = "production"
+  DATA_DIR = "/data/sites"
+  FLY_PUBLIC_HOST = "https://omniflow-preview.fly.dev"
+  JSX_TAGGER_DEP = "file:/app/packages/vite-plugin-jsx-tagger"
+
+# 挂载持久化 Volume
+[mounts]
+  source = "omniflow_sites_data"
+  destination = "/data"
+
+# 增加资源以支持 Vite Dev Server 进程池
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2
+
+# 健康检查
+[checks]
+  [checks.health]
+    port = 3000
+    type = "http"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"

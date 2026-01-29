@@ -1,0 +1,51 @@
+{
+  "name": "vite-plugin-jsx-tagger",
+  "version": "0.1.0",
+  "description": "Vite plugin for JSX element tagging with stable IDs for visual editing",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "vite",
+    "plugin",
+    "jsx",
+    "tagging",
+    "visual-editor",
+    "source-map"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/plugin-syntax-typescript": "^7.23.0",
+    "@babel/types": "^7.23.0"
+  },
+  "devDependencies": {
+    "@types/babel__core": "^7.20.0",
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}

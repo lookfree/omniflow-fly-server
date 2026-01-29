@@ -1,0 +1,26 @@
+{
+  "name": "@omniflow/fly-server",
+  "version": "1.0.0",
+  "description": "Visual Editor Preview Server for Omniflow",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "predeploy": "mkdir -p static/injection && cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/",
+    "deploy": "bun run predeploy && fly deploy --remote-only"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "@hono/node-server": "^1.8.0",
+    "ws": "^8.14.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "bun-types": "latest",
+    "typescript": "^5.0.0"
+  }
+}
