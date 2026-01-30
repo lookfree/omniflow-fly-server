@@ -115,7 +115,16 @@ export class TemplateManager {
     console.log(`[TemplateManager] Copying template to ${projectId}...`);
     const start = Date.now();
 
+    // Remove existing project directory if it exists (prevents "same source/dest" error)
+    try {
+      await rm(projectPath, { recursive: true, force: true });
+    } catch {
+      // Directory may not exist, ignore
+    }
+
     // Copy entire template directory (includes node_modules)
+    // Symlinks are preserved - they point to /app/packages/vite-plugin-jsx-tagger
+    // which exists in the Docker image
     await cp(this.templatePath, projectPath, { recursive: true });
 
     console.log(

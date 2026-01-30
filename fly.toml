@@ -14,7 +14,7 @@ primary_region = "sin"
 [env]
   NODE_ENV = "production"
   DATA_DIR = "/data/sites"
-  FLY_PUBLIC_HOST = "https://omniflow-preview.fly.dev"
+  FLY_PUBLIC_HOST = "omniflow-preview.fly.dev"
   JSX_TAGGER_DEP = "file:/app/packages/vite-plugin-jsx-tagger"
 
 # 挂载持久化 Volume

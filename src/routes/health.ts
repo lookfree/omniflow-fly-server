@@ -4,6 +4,7 @@
 
 import { Hono } from 'hono';
 import { viteManager } from '../services/vite-manager';
+import { templateManager } from '../services/template-manager';
 import type { ApiResponse } from '../types';
 
 const app = new Hono();
@@ -76,6 +77,47 @@ app.get('/debug/instances', (c) => {
     data: {
       count: instances.length,
       instances,
+    },
+  });
+});
+
+/**
+ * POST /admin/rebuild-template - Force rebuild template
+ * Use this when template becomes corrupted or after dependency updates
+ */
+app.post('/admin/rebuild-template', async (c) => {
+  try {
+    console.log('[Admin] Rebuilding template...');
+    const start = Date.now();
+    await templateManager.rebuild();
+    const duration = Date.now() - start;
+
+    console.log(`[Admin] Template rebuilt in ${duration}ms`);
+    return c.json<ApiResponse>({
+      success: true,
+      data: {
+        message: 'Template rebuilt successfully',
+        duration,
+      },
+    });
+  } catch (error) {
+    console.error('[Admin] Failed to rebuild template:', error);
+    return c.json<ApiResponse>({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to rebuild template',
+    }, 500);
+  }
+});
+
+/**
+ * GET /admin/template-status - Check template status
+ */
+app.get('/admin/template-status', (c) => {
+  return c.json<ApiResponse>({
+    success: true,
+    data: {
+      ready: templateManager.isReady(),
+      path: templateManager.getTemplatePath(),
     },
   });
 });

@@ -115,8 +115,20 @@ app.all('/p/:projectId/*', async (c) => {
   const fullPath = c.req.path;
   const queryString = new URL(c.req.url).search;
 
-  // Proxy request to Vite Dev Server (preserve full path)
-  const targetUrl = `http://localhost:${instance.port}${fullPath}${queryString}`;
+  // For Vite middleware API paths (like /__jsx-locate, /__jsx-by-file),
+  // strip the /p/{projectId} prefix since middlewares are registered without it
+  const pathAfterBase = fullPath.replace(`/p/${projectId}`, '') || '/';
+  const isViteMiddlewareApi = pathAfterBase.startsWith('/__jsx-');
+
+  // Proxy request to Vite Dev Server
+  // - For middleware APIs: use path without base prefix
+  // - For other requests: preserve full path (Vite expects base prefix)
+  const proxyPath = isViteMiddlewareApi ? pathAfterBase : fullPath;
+  const targetUrl = `http://localhost:${instance.port}${proxyPath}${queryString}`;
+
+  if (isViteMiddlewareApi) {
+    console.log(`[Proxy] Vite middleware API: ${fullPath} -> ${proxyPath}`);
+  }
 
   try {
     // Create new request headers, set Host to localhost to bypass Vite's allowedHosts check
