@@ -157,14 +157,19 @@ function generatePackageJson(config: ProjectConfig): string {
 
 function generateViteConfig(config: ProjectConfig): string {
   const idPrefix = config.projectId.slice(0, 8);
+  const basePath = `/p/${config.projectId}/`;
+  // fly-server public domain for direct HMR WebSocket connection
+  const flyPublicHost = process.env.FLY_PUBLIC_HOST || 'omniflow-preview.fly.dev';
+  const isHttps = flyPublicHost.includes('fly.dev') || process.env.FLY_HTTPS === 'true';
 
   return `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
 
 export default defineConfig({
+  base: '${basePath}',
   plugins: [
-    // JSX Tagger must be before React plugin to inject data-jsx-* attributes at compile time
+    // JSX Tagger must be before React plugin for visual editing
     jsxTaggerPlugin({
       idPrefix: '${idPrefix}',
       removeInProduction: false,
@@ -172,14 +177,13 @@ export default defineConfig({
     react(),
   ],
   server: {
-    port: 5173,
     host: true,
-    // Allow all hosts for proxy access
     allowedHosts: 'all',
-    // HMR doesn't set custom host, uses page origin
-    // WebSocket will go through full proxy chain:
-    // localhost:3000 (frontend) -> localhost:3001 (backend) -> fly-server -> Vite
     hmr: {
+      protocol: '${isHttps ? 'wss' : 'ws'}',
+      host: '${flyPublicHost}',
+      clientPort: ${isHttps ? 443 : 3000},
+      path: '/hmr/${config.projectId}',
       overlay: true,
     },
   },

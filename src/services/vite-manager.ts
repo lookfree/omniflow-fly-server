@@ -178,7 +178,8 @@ export class ViteDevServerManager extends EventEmitter {
           // node_modules may not exist
         }
 
-        const result = await dependencyManager.install(projectPath);
+        // Use reinstall to force fresh installation after modifying package.json
+        const result = await dependencyManager.reinstall(projectPath);
         if (!result.success) {
           console.error(`[ViteManager] Failed to install dependencies:`, result.logs.join('\n'));
         } else {
@@ -205,6 +206,17 @@ export class ViteDevServerManager extends EventEmitter {
 
     try {
       const originalContent = await readFile(configPath, 'utf-8');
+
+      // Check if config already has correct base and HMR settings
+      const hasCorrectBase = originalContent.includes(`base: '${basePath}'`);
+      const hasCorrectHmr = originalContent.includes(`path: '/hmr/${projectId}'`);
+      const hasJsxTagger = originalContent.includes('jsxTaggerPlugin');
+
+      // If config is already correct, skip regeneration
+      if (hasCorrectBase && hasCorrectHmr && hasJsxTagger) {
+        console.log(`[ViteManager] vite.config.ts already configured correctly, skipping regeneration`);
+        return;
+      }
 
       // Read package.json to see what dependencies are available
       let packageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> } = {};
@@ -279,9 +291,9 @@ export default defineConfig({
       await writeFile(configPath, newConfig, 'utf-8');
       console.log(`[ViteManager] Regenerated vite.config.ts with base: ${basePath}, HMR config for ${flyPublicHost}`);
 
-      // Reinstall dependencies to ensure all packages are available
-      console.log(`[ViteManager] Reinstalling dependencies to ensure all packages are available...`);
-      const result = await dependencyManager.install(projectPath);
+      // Force reinstall dependencies only when config changed
+      console.log(`[ViteManager] Reinstalling dependencies after config update...`);
+      const result = await dependencyManager.reinstall(projectPath);
       if (!result.success) {
         console.error(`[ViteManager] Dependency installation failed:`, result.logs.join('\n'));
       } else {
