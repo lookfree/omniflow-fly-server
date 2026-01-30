@@ -109,16 +109,61 @@ fly deploy --remote-only
 | `3000` | Hono Server | Main API, routing, and proxy |
 | `5200-5219` | Vite Dev Servers | One per project preview (up to 20 concurrent) |
 
-Each project preview runs its own Vite dev server on a dedicated port:
+**Port Allocation Mechanism**:
 
 ```
-Project A → Vite on port 5200
-Project B → Vite on port 5201
-Project C → Vite on port 5202
-...
+┌─────────────────────────────────────────────────────────────┐
+│                    Hono Server (Port 3000)                  │
+│  - Receives all requests                                    │
+│  - Routes /p/:projectId/* to corresponding Vite server      │
+│  - Manages project lifecycle                                │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+     ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+     │ Vite:5200   │  │ Vite:5201   │  │ Vite:5202   │  ...
+     │ Project A   │  │ Project B   │  │ Project C   │
+     │ /p/proj-a/* │  │ /p/proj-b/* │  │ /p/proj-c/* │
+     └─────────────┘  └─────────────┘  └─────────────┘
 ```
 
-This enables **up to 20 concurrent project previews** with independent HMR hot reload.
+**Port Pool Management**:
+
+```typescript
+// Configuration in vite-manager.ts
+basePort: 5200,        // Starting port
+maxInstances: 20,      // Port range: 5200-5219
+idleTimeout: 30 * 60 * 1000,  // 30 minutes idle timeout
+```
+
+- **Allocation**: When a project starts, allocates the next available port from pool
+- **Release**: Port returns to pool when project stops or after 30 min idle
+- **Reuse**: Same project reuses its port if still running
+
+**Example Multi-Project Scenario**:
+
+```
+Time 0:00 - User A opens Project X
+  → Allocate port 5200
+  → Start Vite on 5200
+  → /p/project-x/* → proxy to localhost:5200
+
+Time 0:05 - User B opens Project Y
+  → Allocate port 5201
+  → Start Vite on 5201
+  → /p/project-y/* → proxy to localhost:5201
+
+Time 0:10 - User A opens Project X again
+  → Project X already running on 5200
+  → Update lastActive timestamp
+  → Reuse existing instance
+
+Time 0:35 - Project X idle for 30 minutes
+  → Auto cleanup triggered
+  → Stop Vite, release port 5200
+  → Port 5200 available for new projects
+```
 
 ### Request Flow
 
