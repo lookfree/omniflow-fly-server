@@ -192,113 +192,95 @@ export class ViteDevServerManager extends EventEmitter {
 
   /**
    * Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
+   * This function rewrites the entire vite.config.ts to avoid regex corruption issues
    */
   private async ensureViteConfig(projectId: string, projectPath: string): Promise<void> {
     const configPath = join(projectPath, 'vite.config.ts');
     const basePath = `/p/${projectId}/`;
     const idPrefix = projectId.slice(0, 8);
     // fly-server public domain for direct HMR WebSocket connection
-    const flyPublicHost = process.env.FLY_PUBLIC_HOST || 'ai-site-preview.fly.dev';
+    const flyPublicHost = process.env.FLY_PUBLIC_HOST || 'omniflow-preview.fly.dev';
     const isHttps = flyPublicHost.includes('fly.dev') || process.env.FLY_HTTPS === 'true';
 
     try {
-      let content = await readFile(configPath, 'utf-8');
-      let modified = false;
+      const originalContent = await readFile(configPath, 'utf-8');
 
-      // 0. Ensure jsxTaggerPlugin is imported and used (for visual editing)
-      if (!content.includes('jsxTaggerPlugin')) {
-        // Add import
-        if (content.includes("from 'vite'")) {
-          content = content.replace(
-            /import\s*\{[^}]*\}\s*from\s*['"]vite['"]/,
-            match => `${match}\nimport { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';`
-          );
-        } else {
-          // Add import at the beginning of the file
-          content = `import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';\n${content}`;
+      // Extract existing imports (excluding vite and react plugin imports we'll add)
+      const importLines: string[] = [];
+      const otherLines: string[] = [];
+
+      for (const line of originalContent.split('\n')) {
+        if (line.trim().startsWith('import ')) {
+          // Skip imports we'll add ourselves
+          if (!line.includes('jsxTaggerPlugin') &&
+              !line.includes("from 'vite'") &&
+              !line.includes("from \"vite\"") &&
+              !line.includes('@vitejs/plugin-react')) {
+            importLines.push(line);
+          }
         }
+      }
 
-        // Add plugin to plugins array (must be before react())
-        const jsxTaggerPluginConfig = `jsxTaggerPlugin({
+      // Extract plugins from original config (excluding react which we'll add)
+      const pluginMatches = originalContent.match(/plugins:\s*\[([\s\S]*?)\]/);
+      let existingPlugins: string[] = [];
+      if (pluginMatches) {
+        const pluginsContent = pluginMatches[1];
+        // Extract plugin calls, handling nested parentheses
+        const pluginCalls = pluginsContent.split(/,(?![^(]*\))/).map(p => p.trim()).filter(p => p);
+        existingPlugins = pluginCalls.filter(p =>
+          !p.includes('jsxTaggerPlugin') &&
+          !p.includes('react(') &&
+          p.length > 0
+        );
+      }
+
+      // Extract resolve.alias if exists
+      const aliasMatch = originalContent.match(/resolve:\s*\{[\s\S]*?alias:\s*\{([\s\S]*?)\}/);
+      let aliasConfig = '';
+      if (aliasMatch) {
+        aliasConfig = aliasMatch[1].trim();
+      }
+
+      // Build new clean vite.config.ts
+      const newConfig = `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+${importLines.join('\n')}${importLines.length > 0 ? '\n' : ''}
+export default defineConfig({
+  base: '${basePath}',
+  plugins: [
+    // JSX Tagger must be before React plugin for visual editing
+    jsxTaggerPlugin({
       idPrefix: '${idPrefix}',
       removeInProduction: false,
-    }),`;
-
-        if (content.includes('plugins:')) {
-          // Add at the beginning of plugins array
-          content = content.replace(
-            /plugins:\s*\[/,
-            `plugins: [\n    // JSX Tagger must be before React plugin\n    ${jsxTaggerPluginConfig}`
-          );
-        }
-        modified = true;
-        console.log(`[ViteManager] Added jsxTaggerPlugin to vite.config.ts for visual editing`);
-      }
-
-      // 1. Add or update base configuration
-      if (content.includes('base:')) {
-        // Update existing base configuration
-        content = content.replace(/base:\s*['"][^'"]*['"]/, `base: '${basePath}'`);
-        modified = true;
-      } else if (content.includes('defineConfig({')) {
-        // Add base after defineConfig
-        content = content.replace(
-          /defineConfig\(\{/,
-          `defineConfig({\n  base: '${basePath}',`
-        );
-        modified = true;
-      }
-
-      // 2. Add or update server configuration (including allowedHosts and hmr)
-      // HMR configuration lets Vite client connect directly to fly-server, bypassing backend proxy
-      // Note: path uses full path, Vite will use this path directly (won't combine with base)
-      const hmrConfig = `hmr: {
+    }),
+    react(),${existingPlugins.length > 0 ? '\n    ' + existingPlugins.join(',\n    ') + ',' : ''}
+  ],
+  server: {
+    host: true,
+    allowedHosts: 'all',
+    hmr: {
       protocol: '${isHttps ? 'wss' : 'ws'}',
       host: '${flyPublicHost}',
       clientPort: ${isHttps ? 443 : 3000},
       path: '/hmr/${projectId}',
       overlay: true,
-    },`;
+    },
+  },${aliasConfig ? `
+  resolve: {
+    alias: {
+      ${aliasConfig}
+    },
+  },` : ''}
+  build: {
+    sourcemap: true,
+  },
+});
+`;
 
-      if (content.includes('server:')) {
-        // server configuration exists
-        if (!content.includes('allowedHosts')) {
-          content = content.replace(
-            /server:\s*\{/,
-            "server: {\n    allowedHosts: 'all',"
-          );
-          modified = true;
-        }
-        // Update or add hmr configuration
-        if (content.includes('hmr:')) {
-          // Replace existing hmr configuration (use more robust regex, match nested braces)
-          // Match hmr: { ... } including multiline and nested objects
-          content = content.replace(
-            /hmr:\s*\{[\s\S]*?overlay:\s*true,?\s*\},?[\s\n]*/,
-            hmrConfig + '\n    '
-          );
-          modified = true;
-        } else {
-          // Add hmr after allowedHosts
-          content = content.replace(
-            /(allowedHosts:\s*['"][^'"]*['"],?)\s*/,
-            `$1\n    ${hmrConfig}\n    `
-          );
-          modified = true;
-        }
-      } else if (content.includes('defineConfig({')) {
-        // Add complete server configuration
-        content = content.replace(
-          /defineConfig\(\{/,
-          `defineConfig({\n  server: {\n    allowedHosts: 'all',\n    ${hmrConfig}\n  },`
-        );
-        modified = true;
-      }
-
-      if (modified) {
-        await writeFile(configPath, content, 'utf-8');
-        console.log(`[ViteManager] Updated vite.config.ts with base: ${basePath}, allowedHosts, and HMR config for ${flyPublicHost}`);
-      }
+      await writeFile(configPath, newConfig, 'utf-8');
+      console.log(`[ViteManager] Regenerated vite.config.ts with base: ${basePath}, HMR config for ${flyPublicHost}`);
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
       // Don't block startup, continue trying
