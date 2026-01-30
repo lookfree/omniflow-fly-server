@@ -192,10 +192,11 @@ export class ViteDevServerManager extends EventEmitter {
 
   /**
    * Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
-   * This function rewrites the entire vite.config.ts to avoid regex corruption issues
+   * This function regenerates vite.config.ts while preserving user's plugins from package.json
    */
   private async ensureViteConfig(projectId: string, projectPath: string): Promise<void> {
     const configPath = join(projectPath, 'vite.config.ts');
+    const packageJsonPath = join(projectPath, 'package.json');
     const basePath = `/p/${projectId}/`;
     const idPrefix = projectId.slice(0, 8);
     // fly-server public domain for direct HMR WebSocket connection
@@ -205,34 +206,30 @@ export class ViteDevServerManager extends EventEmitter {
     try {
       const originalContent = await readFile(configPath, 'utf-8');
 
-      // Extract existing imports (excluding vite and react plugin imports we'll add)
-      const importLines: string[] = [];
-      const otherLines: string[] = [];
+      // Read package.json to see what dependencies are available
+      let packageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> } = {};
+      try {
+        const pkgContent = await readFile(packageJsonPath, 'utf-8');
+        packageJson = JSON.parse(pkgContent);
+      } catch {
+        // Ignore if package.json doesn't exist
+      }
+      const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
 
-      for (const line of originalContent.split('\n')) {
-        if (line.trim().startsWith('import ')) {
-          // Skip imports we'll add ourselves
-          if (!line.includes('jsxTaggerPlugin') &&
-              !line.includes("from 'vite'") &&
-              !line.includes("from \"vite\"") &&
-              !line.includes('@vitejs/plugin-react')) {
-            importLines.push(line);
-          }
-        }
+      // Detect additional imports and plugins based on package.json
+      const additionalImports: string[] = [];
+      const additionalPlugins: string[] = [];
+
+      // Check for @tailwindcss/vite
+      if (allDeps['@tailwindcss/vite'] && originalContent.includes('@tailwindcss/vite')) {
+        additionalImports.push("import tailwindcss from '@tailwindcss/vite';");
+        additionalPlugins.push('tailwindcss()');
       }
 
-      // Extract plugins from original config (excluding react which we'll add)
-      const pluginMatches = originalContent.match(/plugins:\s*\[([\s\S]*?)\]/);
-      let existingPlugins: string[] = [];
-      if (pluginMatches) {
-        const pluginsContent = pluginMatches[1];
-        // Extract plugin calls, handling nested parentheses
-        const pluginCalls = pluginsContent.split(/,(?![^(]*\))/).map(p => p.trim()).filter(p => p);
-        existingPlugins = pluginCalls.filter(p =>
-          !p.includes('jsxTaggerPlugin') &&
-          !p.includes('react(') &&
-          p.length > 0
-        );
+      // Check for path (standard node module for resolve.alias)
+      const hasPathImport = originalContent.includes("import path") || originalContent.includes("from 'path'") || originalContent.includes('from "path"');
+      if (hasPathImport) {
+        additionalImports.push("import path from 'path';");
       }
 
       // Extract resolve.alias if exists
@@ -246,7 +243,7 @@ export class ViteDevServerManager extends EventEmitter {
       const newConfig = `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
-${importLines.join('\n')}${importLines.length > 0 ? '\n' : ''}
+${additionalImports.join('\n')}${additionalImports.length > 0 ? '\n' : ''}
 export default defineConfig({
   base: '${basePath}',
   plugins: [
@@ -255,7 +252,7 @@ export default defineConfig({
       idPrefix: '${idPrefix}',
       removeInProduction: false,
     }),
-    react(),${existingPlugins.length > 0 ? '\n    ' + existingPlugins.join(',\n    ') + ',' : ''}
+    react(),${additionalPlugins.length > 0 ? '\n    ' + additionalPlugins.join(',\n    ') + ',' : ''}
   ],
   server: {
     host: true,
@@ -281,6 +278,15 @@ export default defineConfig({
 
       await writeFile(configPath, newConfig, 'utf-8');
       console.log(`[ViteManager] Regenerated vite.config.ts with base: ${basePath}, HMR config for ${flyPublicHost}`);
+
+      // Reinstall dependencies to ensure all packages are available
+      console.log(`[ViteManager] Reinstalling dependencies to ensure all packages are available...`);
+      const result = await dependencyManager.install(projectPath);
+      if (!result.success) {
+        console.error(`[ViteManager] Dependency installation failed:`, result.logs.join('\n'));
+      } else {
+        console.log(`[ViteManager] Dependencies installed successfully`);
+      }
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
       // Don't block startup, continue trying
