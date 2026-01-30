@@ -102,12 +102,30 @@ fly deploy --remote-only
 
 ## Architecture
 
+### Port Architecture
+
+| Port | Service | Purpose |
+|------|---------|---------|
+| `3000` | Hono Server | Main API, routing, and proxy |
+| `5200-5219` | Vite Dev Servers | One per project preview (up to 20 concurrent) |
+
+Each project preview runs its own Vite dev server on a dedicated port:
+
+```
+Project A → Vite on port 5200
+Project B → Vite on port 5201
+Project C → Vite on port 5202
+...
+```
+
+This enables **up to 20 concurrent project previews** with independent HMR hot reload.
+
 ### Request Flow
 
 1. User visits `/p/{projectId}`
 2. Server looks up project directory
 3. If project doesn't exist, creates scaffold
-4. Starts/reuses Vite dev server
+4. Starts/reuses Vite dev server on next available port (5200-5219)
 5. Proxies request to Vite, injects visual-edit-script
 6. HMR updates pushed via WebSocket
 
@@ -118,14 +136,34 @@ User clicks element in preview
         ↓
 visual-edit-script.js captures click
         ↓
-Reads data-jsx-* attributes
+Reads data-jsx-* attributes (file, line, column)
         ↓
-postMessage sent to parent
+postMessage sent to parent window
         ↓
-Parent updates source code
+Parent updates source code via API
         ↓
-Vite HMR refreshes preview
+fly-server writes file to disk
+        ↓
+Vite HMR detects change and refreshes preview
 ```
+
+### Scaffold Generation
+
+When a new project is created, the server generates:
+
+- `package.json` - Dependencies including React, Vite, Tailwind
+- `vite.config.ts` - Vite config with jsx-tagger plugin
+- `index.html` - Entry HTML file
+- `src/` - Source directory with initial components
+
+## Docker Configuration
+
+```dockerfile
+EXPOSE 3000        # Main Hono server
+EXPOSE 5200-5219   # Vite dev server port range
+```
+
+The container exposes 21 ports total to support concurrent project previews.
 
 ## License
 
