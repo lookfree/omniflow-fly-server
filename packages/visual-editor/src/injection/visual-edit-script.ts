@@ -27,22 +27,18 @@ interface ResizePayload {
   originalHeight: number;
 }
 
-interface TextEditPayload {
-  jsxId: string | null;
-  text: string;
-  originalText: string;
-  tagName: string;
-  className: string;
-  jsxFile?: string;
-  jsxLine?: number;
-  jsxCol?: number;
+// Changes format from sidebar
+interface ElementChanges {
+  textContent?: string;
+  className?: string;
+  styles?: Record<string, string>;
+  attributes?: Record<string, string>;
 }
 
 interface UpdatePayload {
   jsxId: string;
   elementIndex?: number;
-  type: 'text' | 'className' | 'style' | 'attribute';
-  value: string | Record<string, string> | { name: string; value: string | null };
+  changes: ElementChanges;
 }
 
 type MessageType =
@@ -52,7 +48,6 @@ type MessageType =
   | 'ELEMENT_UPDATED'
   | 'ELEMENT_RESIZING'
   | 'ELEMENT_RESIZED'
-  | 'TEXT_EDIT_CONFIRMED'
   | 'EDIT_MODE_ENABLED'
   | 'EDIT_MODE_DISABLED'
   | 'FULL_HTML'
@@ -65,20 +60,14 @@ export class VisualEditController {
   private hoveredElement: HTMLElement | null = null;
   private highlightOverlay: HTMLDivElement | null = null;
   private hoverOverlay: HTMLDivElement | null = null;
-  private textEditBox: HTMLInputElement | null = null;
   private resizeHandles: Map<string, HTMLDivElement> = new Map();
   private isEditMode = false;
   private isTextEditing = false;
+  private originalTextBeforeEdit = '';
   private isResizing = false;
   private resizeHandle: string | null = null;
   private dragStartPos = { x: 0, y: 0 };
   private originalRect: DOMRect | null = null;
-  private textEditContainer: HTMLDivElement | null = null;
-  private textSubmitBtn: HTMLButtonElement | null = null;
-  private textLoadingIndicator: HTMLDivElement | null = null;
-  private isSaving = false;
-  private isClickingSubmit = false;
-  private originalTextBeforeEdit = '';
 
   constructor() {
     this.init();
@@ -86,7 +75,6 @@ export class VisualEditController {
 
   private init(): void {
     this.createOverlays();
-    this.createTextEditBox();
     this.createResizeHandles();
     this.setupEventListeners();
     this.setupMessageHandler();
@@ -124,148 +112,6 @@ export class VisualEditController {
     document.body.appendChild(this.highlightOverlay);
     document.body.appendChild(this.hoverOverlay);
   }
-
-  private createTextEditBox(): void {
-    this.textEditContainer = document.createElement('div');
-    this.textEditContainer.id = '__visual_edit_text_container__';
-    this.textEditContainer.style.cssText = `
-      position: fixed;
-      z-index: 1000001;
-      display: none;
-      min-width: 250px;
-      max-width: 450px;
-      background: #faf8f5;
-      border: 1px solid #e5e0d8;
-      border-radius: 24px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-      overflow: hidden;
-    `;
-
-    this.textEditBox = document.createElement('input');
-    this.textEditBox.id = '__visual_edit_text_box__';
-    this.textEditBox.type = 'text';
-    this.textEditBox.placeholder = 'Enter new text...';
-    this.textEditBox.style.cssText = `
-      flex: 1;
-      border: none;
-      outline: none;
-      padding: 12px 16px;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #333;
-      background: transparent;
-      min-width: 0;
-    `;
-
-    this.textSubmitBtn = document.createElement('button');
-    this.textSubmitBtn.id = '__visual_edit_submit_btn__';
-    this.textSubmitBtn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="19" x2="12" y2="5"></line>
-        <polyline points="5 12 12 5 19 12"></polyline>
-      </svg>
-    `;
-    this.textSubmitBtn.style.cssText = `
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      border: none;
-      background: #1a1a1a;
-      color: #fff;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-right: 6px;
-      flex-shrink: 0;
-      transition: opacity 0.2s;
-    `;
-
-    this.textLoadingIndicator = document.createElement('div');
-    this.textLoadingIndicator.id = '__visual_edit_loading__';
-    this.textLoadingIndicator.style.cssText = `
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #faf8f5;
-      border-radius: 24px;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 12px 16px;
-    `;
-    this.textLoadingIndicator.innerHTML = `
-      <span style="
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        border: 2px solid #999;
-        border-top-color: transparent;
-        animation: __ve_spin 0.8s linear infinite;
-      "></span>
-      <span style="color: #666; font-size: 14px;">Updating...</span>
-    `;
-
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes __ve_spin {
-        to { transform: rotate(360deg); }
-      }
-    `;
-    document.head.appendChild(style);
-
-    const inputRow = document.createElement('div');
-    inputRow.style.cssText = `display: flex; align-items: center;`;
-    inputRow.appendChild(this.textEditBox);
-    inputRow.appendChild(this.textSubmitBtn);
-
-    this.textEditContainer.appendChild(inputRow);
-    this.textEditContainer.appendChild(this.textLoadingIndicator);
-
-    this.textEditBox.addEventListener('keydown', this.handleTextBoxKeydown);
-    this.textSubmitBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.confirmTextEdit();
-    });
-
-    this.textEditContainer.addEventListener('mousedown', (e) => {
-      if (e.target === this.textSubmitBtn || this.textSubmitBtn?.contains(e.target as Node)) {
-        e.preventDefault();
-        e.stopPropagation();
-        this.isClickingSubmit = true;
-        setTimeout(() => {
-          this.isClickingSubmit = false;
-        }, 300);
-      }
-    });
-
-    this.textEditBox.addEventListener('blur', this.handleTextBoxBlur);
-    document.body.appendChild(this.textEditContainer);
-  }
-
-  private handleTextBoxKeydown = (e: KeyboardEvent): void => {
-    if (this.isSaving) {
-      e.preventDefault();
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      this.exitTextEditMode();
-    }
-  };
-
-  private handleTextBoxBlur = (): void => {
-    setTimeout(() => {
-      if (this.isTextEditing && !this.isSaving && !this.isClickingSubmit) {
-        this.exitTextEditMode();
-      }
-    }, 200);
-  };
 
   private createResizeHandles(): void {
     const handles: HandleDirection[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -511,24 +357,15 @@ export class VisualEditController {
       (e) => {
         console.log('[visual-edit-script] click event', {
           isEditMode: this.isEditMode,
+          isTextEditing: this.isTextEditing,
           target: (e.target as HTMLElement).tagName,
           targetId: (e.target as HTMLElement).id,
         });
 
         if (!this.isEditMode) return;
 
-        const clickTarget = e.target as HTMLElement;
-        if (this.textEditContainer && this.textEditContainer.contains(clickTarget)) {
-          console.log('[visual-edit-script] click inside text edit container');
-          if (
-            this.textSubmitBtn &&
-            (clickTarget === this.textSubmitBtn || this.textSubmitBtn.contains(clickTarget))
-          ) {
-            console.log('[visual-edit-script] click on submit button, calling confirmTextEdit');
-            e.preventDefault();
-            e.stopPropagation();
-            this.confirmTextEdit();
-          }
+        // If currently text editing, don't prevent default (allow cursor movement)
+        if (this.isTextEditing) {
           return;
         }
 
@@ -543,11 +380,13 @@ export class VisualEditController {
       true
     );
 
+    // Double-click to enter inline text edit mode
     document.addEventListener(
       'dblclick',
       (e) => {
         if (!this.isEditMode || !this.selectedElement) return;
         e.preventDefault();
+        e.stopPropagation();
         this.enterTextEditMode();
       },
       true
@@ -556,7 +395,9 @@ export class VisualEditController {
     document.addEventListener('keydown', (e) => {
       if (!this.isEditMode) return;
       if (e.key === 'Escape') {
-        this.exitTextEditMode();
+        if (this.isTextEditing) {
+          this.exitTextEditMode(false); // Don't commit changes on Escape
+        }
         this.deselectElement();
       }
     });
@@ -583,33 +424,38 @@ export class VisualEditController {
   // ========== Message Handler ==========
   private setupMessageHandler(): void {
     window.addEventListener('message', (e) => {
-      const { type, payload } = e.data || {};
+      const data = e.data || {};
+      const { type } = data;
+      if (type) {
+        console.log('[visual-edit-script] Received message:', type, data);
+      }
       switch (type) {
         case 'ENABLE_EDIT_MODE':
+          console.log('[visual-edit-script] Enabling edit mode');
           this.enableEditMode();
           break;
         case 'DISABLE_EDIT_MODE':
           this.disableEditMode();
           break;
         case 'UPDATE_ELEMENT':
-          this.handleElementUpdate(payload as UpdatePayload);
+          // Support both formats: { type, jsxId, changes } and { type, payload: { jsxId, changes } }
+          if (data.jsxId && data.changes) {
+            this.handleElementUpdate({ jsxId: data.jsxId, changes: data.changes });
+          } else if (data.payload) {
+            this.handleElementUpdate(data.payload as UpdatePayload);
+          }
           break;
         case 'SELECT_BY_JSX_ID':
-          this.selectByJsxId(payload.jsxId, payload.elementIndex);
+          this.selectByJsxId(data.jsxId || data.payload?.jsxId, data.elementIndex || data.payload?.elementIndex);
           break;
         case 'GET_FULL_HTML':
           this.sendFullHtml();
           break;
         case 'HIGHLIGHT_ELEMENT':
-          this.highlightByJsxId(payload.jsxId);
+          this.highlightByJsxId(data.jsxId || data.payload?.jsxId);
           break;
         case 'REFRESH_ELEMENT_INFO':
           this.refreshSelectedElementInfo();
-          break;
-        case 'TEXT_SAVE_COMPLETE':
-          console.log('[visual-edit-script] TEXT_SAVE_COMPLETE received');
-          this.hideSavingState();
-          this.exitTextEditMode();
           break;
       }
     });
@@ -823,19 +669,21 @@ export class VisualEditController {
 
     if (!element) return;
 
-    switch (payload.type) {
-      case 'text':
-        this.updateElementText(element, payload.value as string);
-        break;
-      case 'className':
-        this.updateElementClassName(element, payload.value as string);
-        break;
-      case 'style':
-        this.updateElementStyle(element, payload.value as Record<string, string>);
-        break;
-      case 'attribute':
-        this.updateElementAttribute(element, payload.value as { name: string; value: string | null });
-        break;
+    const changes = payload.changes;
+
+    // Apply text content change
+    if (changes.textContent !== undefined) {
+      this.updateElementText(element, changes.textContent);
+    }
+
+    // Apply className change
+    if (changes.className !== undefined) {
+      this.updateElementClassName(element, changes.className);
+    }
+
+    // Apply style changes
+    if (changes.styles) {
+      this.updateElementStyle(element, changes.styles);
     }
 
     if (element === this.selectedElement) {
@@ -883,101 +731,77 @@ export class VisualEditController {
     }
   }
 
-  // ========== Text Edit Mode ==========
+  // ========== Inline Text Editing (contenteditable) ==========
   private enterTextEditMode(): void {
-    if (!this.selectedElement || !this.textEditBox || !this.textEditContainer) return;
+    if (!this.selectedElement) return;
 
     this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
     this.isTextEditing = true;
-    this.isSaving = false;
 
-    const rect = this.selectedElement.getBoundingClientRect();
-    this.textEditContainer.style.left = `${rect.left}px`;
-    this.textEditContainer.style.top = `${rect.bottom + 8}px`;
-    this.textEditContainer.style.minWidth = `${Math.max(250, rect.width)}px`;
+    // Make element editable
+    this.selectedElement.contentEditable = 'true';
+    this.selectedElement.style.outline = '2px solid #8b5cf6';
+    this.selectedElement.style.cursor = 'text';
+    this.selectedElement.focus();
 
-    if (rect.bottom + 60 > window.innerHeight) {
-      this.textEditContainer.style.top = `${rect.top - 52}px`;
-    }
+    // Select all text
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(this.selectedElement);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
 
-    this.textEditBox.value = this.originalTextBeforeEdit;
-    this.textEditContainer.style.display = 'block';
+    // Listen for blur to commit changes
+    this.selectedElement.addEventListener('blur', this.handleTextEditBlur);
+    this.selectedElement.addEventListener('keydown', this.handleTextEditKeydown);
 
-    if (this.textLoadingIndicator) {
-      this.textLoadingIndicator.style.display = 'none';
-    }
-
-    this.textEditBox.focus();
-    this.textEditBox.select();
-    this.highlightOverlay!.style.borderColor = '#8b5cf6';
+    console.log('[visual-edit-script] Entered text edit mode');
   }
 
-  private exitTextEditMode(): void {
-    if (!this.textEditContainer) return;
+  private handleTextEditBlur = (): void => {
+    // Small delay to allow for potential re-focus
+    setTimeout(() => {
+      if (this.isTextEditing) {
+        this.exitTextEditMode(true);
+      }
+    }, 100);
+  };
+
+  private handleTextEditKeydown = (e: KeyboardEvent): void => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      this.exitTextEditMode(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this.exitTextEditMode(false);
+    }
+  };
+
+  private exitTextEditMode(commit: boolean): void {
+    if (!this.selectedElement || !this.isTextEditing) return;
+
+    // Remove event listeners
+    this.selectedElement.removeEventListener('blur', this.handleTextEditBlur);
+    this.selectedElement.removeEventListener('keydown', this.handleTextEditKeydown);
+
+    // Disable editing
+    this.selectedElement.contentEditable = 'false';
+    this.selectedElement.style.outline = '';
+    this.selectedElement.style.cursor = '';
+
+    const newText = this.getDirectTextContent(this.selectedElement);
+
+    if (commit && newText !== this.originalTextBeforeEdit) {
+      console.log('[visual-edit-script] Text changed, sending update');
+      // Send update to parent
+      this.postMessage('ELEMENT_UPDATED', this.extractElementInfo(this.selectedElement));
+    } else if (!commit) {
+      // Revert to original text
+      this.updateElementText(this.selectedElement, this.originalTextBeforeEdit);
+    }
+
     this.isTextEditing = false;
-    this.isSaving = false;
-    this.textEditContainer.style.display = 'none';
-    this.highlightOverlay!.style.borderColor = '#3b82f6';
-  }
-
-  private showSavingState(): void {
-    if (!this.textLoadingIndicator) return;
-    this.isSaving = true;
-    this.textLoadingIndicator.style.display = 'flex';
-  }
-
-  private hideSavingState(): void {
-    if (!this.textLoadingIndicator) return;
-    this.isSaving = false;
-    this.textLoadingIndicator.style.display = 'none';
-  }
-
-  private confirmTextEdit(): void {
-    console.log('[visual-edit-script] confirmTextEdit called', {
-      hasSelectedElement: !!this.selectedElement,
-      hasTextEditBox: !!this.textEditBox,
-      isSaving: this.isSaving,
-      isTextEditing: this.isTextEditing,
-    });
-
-    if (!this.selectedElement || !this.textEditBox || this.isSaving) {
-      console.log('[visual-edit-script] confirmTextEdit early return');
-      return;
-    }
-
-    const currentText = this.textEditBox.value;
-    const originalText = this.originalTextBeforeEdit;
-
-    console.log('[visual-edit-script] confirmTextEdit values', {
-      currentText,
-      originalText,
-      areEqual: currentText === originalText,
-    });
-
-    if (currentText === originalText) {
-      console.log('[visual-edit-script] Text unchanged, closing');
-      this.exitTextEditMode();
-      return;
-    }
-
-    console.log('[visual-edit-script] Showing saving state and sending TEXT_EDIT_CONFIRMED');
-    this.showSavingState();
-    this.updateElementText(this.selectedElement, currentText);
-
-    this.postMessage('TEXT_EDIT_CONFIRMED', {
-      jsxId: this.selectedElement.getAttribute('data-jsx-id'),
-      text: currentText,
-      originalText,
-      tagName: this.selectedElement.tagName.toLowerCase(),
-      className: this.selectedElement.className,
-      jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
-      jsxLine: this.selectedElement.getAttribute('data-jsx-line')
-        ? Number(this.selectedElement.getAttribute('data-jsx-line'))
-        : undefined,
-      jsxCol: this.selectedElement.getAttribute('data-jsx-col')
-        ? Number(this.selectedElement.getAttribute('data-jsx-col'))
-        : undefined,
-    } as TextEditPayload);
+    console.log('[visual-edit-script] Exited text edit mode');
   }
 
   // ========== Mode Control ==========

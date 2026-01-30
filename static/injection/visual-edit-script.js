@@ -1,57 +1,46 @@
-// injection/visual-edit-script.ts
+// src/injection/visual-edit-script.ts
 var VisualEditController = class {
   constructor() {
     this.selectedElement = null;
     this.hoveredElement = null;
     this.highlightOverlay = null;
     this.hoverOverlay = null;
-    this.textEditBox = null;
     this.resizeHandles = /* @__PURE__ */ new Map();
     this.isEditMode = false;
     this.isTextEditing = false;
+    this.originalTextBeforeEdit = "";
     this.isResizing = false;
     this.resizeHandle = null;
     this.dragStartPos = { x: 0, y: 0 };
     this.originalRect = null;
-    // 文本编辑容器元素
-    this.textEditContainer = null;
-    this.textSubmitBtn = null;
-    this.textLoadingIndicator = null;
-    this.isSaving = false;
-    this.isClickingSubmit = false;
-    // ========== 文本编辑模式 ==========
-    // 存储进入编辑模式时的原始文本
-    this.originalTextBeforeEdit = "";
-    // 文本框键盘事件 - Escape 取消（Enter 不提交，只有点击箭头才提交）
-    this.handleTextBoxKeydown = (e) => {
-      if (this.isSaving) {
-        e.preventDefault();
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        this.exitTextEditMode();
-      }
-    };
-    // 文本框失焦事件 - 仅取消编辑（不自动提交）
-    this.handleTextBoxBlur = () => {
+    this.handleTextEditBlur = () => {
       setTimeout(() => {
-        if (this.isTextEditing && !this.isSaving && !this.isClickingSubmit) {
-          this.exitTextEditMode();
+        if (this.isTextEditing) {
+          this.exitTextEditMode(true);
         }
-      }, 200);
+      }, 100);
+    };
+    this.handleTextEditKeydown = (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        this.exitTextEditMode(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.exitTextEditMode(false);
+      }
     };
     this.init();
   }
   init() {
     this.createOverlays();
-    this.createTextEditBox();
     this.createResizeHandles();
     this.setupEventListeners();
     this.setupMessageHandler();
     this.setupResizeListeners();
+    console.log("[visual-edit-script] Initialized, sending VISUAL_EDIT_READY");
+    this.postMessage("VISUAL_EDIT_READY", null);
   }
-  // ========== 覆盖层管理 ==========
+  // ========== Overlay Management ==========
   createOverlays() {
     this.highlightOverlay = document.createElement("div");
     this.highlightOverlay.id = "__visual_edit_highlight__";
@@ -77,123 +66,6 @@ var VisualEditController = class {
     `;
     document.body.appendChild(this.highlightOverlay);
     document.body.appendChild(this.hoverOverlay);
-  }
-  // Flag to track submit button clicks
-  createTextEditBox() {
-    this.textEditContainer = document.createElement("div");
-    this.textEditContainer.id = "__visual_edit_text_container__";
-    this.textEditContainer.style.cssText = `
-      position: fixed;
-      z-index: 1000001;
-      display: none;
-      min-width: 250px;
-      max-width: 450px;
-      background: #faf8f5;
-      border: 1px solid #e5e0d8;
-      border-radius: 24px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-      overflow: hidden;
-    `;
-    this.textEditBox = document.createElement("input");
-    this.textEditBox.id = "__visual_edit_text_box__";
-    this.textEditBox.type = "text";
-    this.textEditBox.placeholder = "Enter new text...";
-    this.textEditBox.style.cssText = `
-      flex: 1;
-      border: none;
-      outline: none;
-      padding: 12px 16px;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #333;
-      background: transparent;
-      min-width: 0;
-    `;
-    this.textSubmitBtn = document.createElement("button");
-    this.textSubmitBtn.id = "__visual_edit_submit_btn__";
-    this.textSubmitBtn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="19" x2="12" y2="5"></line>
-        <polyline points="5 12 12 5 19 12"></polyline>
-      </svg>
-    `;
-    this.textSubmitBtn.style.cssText = `
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      border: none;
-      background: #1a1a1a;
-      color: #fff;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-right: 6px;
-      flex-shrink: 0;
-      transition: opacity 0.2s;
-    `;
-    this.textLoadingIndicator = document.createElement("div");
-    this.textLoadingIndicator.id = "__visual_edit_loading__";
-    this.textLoadingIndicator.style.cssText = `
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #faf8f5;
-      border-radius: 24px;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 12px 16px;
-    `;
-    this.textLoadingIndicator.innerHTML = `
-      <span style="
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        border: 2px solid #999;
-        border-top-color: transparent;
-        animation: __ve_spin 0.8s linear infinite;
-      "></span>
-      <span style="color: #666; font-size: 14px;">Updating...</span>
-    `;
-    const style = document.createElement("style");
-    style.textContent = `
-      @keyframes __ve_spin {
-        to { transform: rotate(360deg); }
-      }
-    `;
-    document.head.appendChild(style);
-    const inputRow = document.createElement("div");
-    inputRow.style.cssText = `
-      display: flex;
-      align-items: center;
-    `;
-    inputRow.appendChild(this.textEditBox);
-    inputRow.appendChild(this.textSubmitBtn);
-    this.textEditContainer.appendChild(inputRow);
-    this.textEditContainer.appendChild(this.textLoadingIndicator);
-    this.textEditBox.addEventListener("keydown", this.handleTextBoxKeydown);
-    this.textSubmitBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.confirmTextEdit();
-    });
-    this.textEditContainer.addEventListener("mousedown", (e) => {
-      if (e.target === this.textSubmitBtn || this.textSubmitBtn?.contains(e.target)) {
-        e.preventDefault();
-        e.stopPropagation();
-        this.isClickingSubmit = true;
-        setTimeout(() => {
-          this.isClickingSubmit = false;
-        }, 300);
-      }
-    });
-    this.textEditBox.addEventListener("blur", this.handleTextBoxBlur);
-    document.body.appendChild(this.textEditContainer);
   }
   createResizeHandles() {
     const handles = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -395,7 +267,7 @@ var VisualEditController = class {
     overlay.style.width = `${rect.width}px`;
     overlay.style.height = `${rect.height}px`;
   }
-  // ========== 事件监听 ==========
+  // ========== Event Listeners ==========
   setupEventListeners() {
     document.addEventListener("mousemove", (e) => {
       if (!this.isEditMode) return;
@@ -408,49 +280,57 @@ var VisualEditController = class {
         this.updateHighlight(null, this.hoverOverlay);
       }
     });
-    document.addEventListener("click", (e) => {
-      console.log("[visual-edit-script] click event", {
-        isEditMode: this.isEditMode,
-        target: e.target.tagName,
-        targetId: e.target.id
-      });
-      if (!this.isEditMode) return;
-      const clickTarget = e.target;
-      if (this.textEditContainer && this.textEditContainer.contains(clickTarget)) {
-        console.log("[visual-edit-script] click inside text edit container");
-        if (this.textSubmitBtn && (clickTarget === this.textSubmitBtn || this.textSubmitBtn.contains(clickTarget))) {
-          console.log("[visual-edit-script] click on submit button, calling confirmTextEdit");
-          e.preventDefault();
-          e.stopPropagation();
-          this.confirmTextEdit();
+    document.addEventListener(
+      "click",
+      (e) => {
+        console.log("[visual-edit-script] click event", {
+          isEditMode: this.isEditMode,
+          isTextEditing: this.isTextEditing,
+          target: e.target.tagName,
+          targetId: e.target.id
+        });
+        if (!this.isEditMode) return;
+        if (this.isTextEditing) {
+          return;
         }
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      const target = this.findEditableElement(e.target);
-      if (target) {
-        this.selectElement(target);
-      }
-    }, true);
-    document.addEventListener("dblclick", (e) => {
-      if (!this.isEditMode || !this.selectedElement) return;
-      e.preventDefault();
-      this.enterTextEditMode();
-    }, true);
+        e.preventDefault();
+        e.stopPropagation();
+        const target = this.findEditableElement(e.target);
+        if (target) {
+          this.selectElement(target);
+        }
+      },
+      true
+    );
+    document.addEventListener(
+      "dblclick",
+      (e) => {
+        if (!this.isEditMode || !this.selectedElement) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.enterTextEditMode();
+      },
+      true
+    );
     document.addEventListener("keydown", (e) => {
       if (!this.isEditMode) return;
       if (e.key === "Escape") {
-        this.exitTextEditMode();
+        if (this.isTextEditing) {
+          this.exitTextEditMode(false);
+        }
         this.deselectElement();
       }
     });
-    window.addEventListener("scroll", () => {
-      if (this.selectedElement) {
-        this.updateHighlight(this.selectedElement, this.highlightOverlay);
-        this.updateResizeHandles();
-      }
-    }, true);
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (this.selectedElement) {
+          this.updateHighlight(this.selectedElement, this.highlightOverlay);
+          this.updateResizeHandles();
+        }
+      },
+      true
+    );
     window.addEventListener("resize", () => {
       if (this.selectedElement) {
         this.updateHighlight(this.selectedElement, this.highlightOverlay);
@@ -458,44 +338,45 @@ var VisualEditController = class {
       }
     });
   }
-  // ========== 消息处理 ==========
+  // ========== Message Handler ==========
   setupMessageHandler() {
     window.addEventListener("message", (e) => {
-      const { type, payload } = e.data || {};
+      const data = e.data || {};
+      const { type } = data;
+      if (type) {
+        console.log("[visual-edit-script] Received message:", type, data);
+      }
       switch (type) {
         case "ENABLE_EDIT_MODE":
+          console.log("[visual-edit-script] Enabling edit mode");
           this.enableEditMode();
           break;
         case "DISABLE_EDIT_MODE":
           this.disableEditMode();
           break;
         case "UPDATE_ELEMENT":
-          this.handleElementUpdate(payload);
+          if (data.jsxId && data.changes) {
+            this.handleElementUpdate({ jsxId: data.jsxId, changes: data.changes });
+          } else if (data.payload) {
+            this.handleElementUpdate(data.payload);
+          }
           break;
         case "SELECT_BY_JSX_ID":
-          this.selectByJsxId(
-            payload.jsxId,
-            payload.elementIndex
-          );
+          this.selectByJsxId(data.jsxId || data.payload?.jsxId, data.elementIndex || data.payload?.elementIndex);
           break;
         case "GET_FULL_HTML":
           this.sendFullHtml();
           break;
         case "HIGHLIGHT_ELEMENT":
-          this.highlightByJsxId(payload.jsxId);
+          this.highlightByJsxId(data.jsxId || data.payload?.jsxId);
           break;
         case "REFRESH_ELEMENT_INFO":
           this.refreshSelectedElementInfo();
           break;
-        case "TEXT_SAVE_COMPLETE":
-          console.log("[visual-edit-script] TEXT_SAVE_COMPLETE received");
-          this.hideSavingState();
-          this.exitTextEditMode();
-          break;
       }
     });
   }
-  // ========== 元素选择 ==========
+  // ========== Element Selection ==========
   findEditableElement(element) {
     let current = element;
     while (current && current !== document.body) {
@@ -543,10 +424,6 @@ var VisualEditController = class {
       }, 1e3);
     }
   }
-  /**
-   * Re-extract and send element info from current DOM
-   * Called after HMR to get fresh position info (data-jsx-line/col may have changed)
-   */
   refreshSelectedElementInfo() {
     if (!this.selectedElement) {
       this.postMessage("ELEMENT_INFO_REFRESHED", null);
@@ -555,7 +432,7 @@ var VisualEditController = class {
     const info = this.extractElementInfo(this.selectedElement);
     this.postMessage("ELEMENT_INFO_REFRESHED", info);
   }
-  // ========== 信息提取 ==========
+  // ========== Information Extraction ==========
   extractElementInfo(element) {
     const computedStyles = window.getComputedStyle(element);
     const relevantStyles = {};
@@ -631,10 +508,6 @@ var VisualEditController = class {
       elementCount
     };
   }
-  /**
-   * 获取元素在相同 jsxId 元素中的索引
-   * 用于处理 .map() 生成的多个相同 jsxId 的元素
-   */
   getElementIndexAmongSiblings(element, jsxId) {
     if (!jsxId) return { elementIndex: 0, elementCount: 1 };
     const allElements = document.querySelectorAll(`[data-jsx-id="${jsxId}"]`);
@@ -672,7 +545,7 @@ var VisualEditController = class {
     }
     return path;
   }
-  // ========== 元素更新 ==========
+  // ========== Element Update ==========
   handleElementUpdate(payload) {
     let element = null;
     if (this.selectedElement && this.selectedElement.getAttribute("data-jsx-id") === payload.jsxId) {
@@ -684,19 +557,15 @@ var VisualEditController = class {
       element = document.querySelector(`[data-jsx-id="${payload.jsxId}"]`);
     }
     if (!element) return;
-    switch (payload.type) {
-      case "text":
-        this.updateElementText(element, payload.value);
-        break;
-      case "className":
-        this.updateElementClassName(element, payload.value);
-        break;
-      case "style":
-        this.updateElementStyle(element, payload.value);
-        break;
-      case "attribute":
-        this.updateElementAttribute(element, payload.value);
-        break;
+    const changes = payload.changes;
+    if (changes.textContent !== void 0) {
+      this.updateElementText(element, changes.textContent);
+    }
+    if (changes.className !== void 0) {
+      this.updateElementClassName(element, changes.className);
+    }
+    if (changes.styles) {
+      this.updateElementStyle(element, changes.styles);
     }
     if (element === this.selectedElement) {
       this.updateHighlight(element, this.highlightOverlay);
@@ -713,9 +582,7 @@ var VisualEditController = class {
     }
   }
   updateElementClassName(element, className) {
-    const jsxClasses = Array.from(element.classList).filter(
-      (cls) => cls.startsWith("__jsx_")
-    );
+    const jsxClasses = Array.from(element.classList).filter((cls) => cls.startsWith("__jsx_"));
     element.className = [...jsxClasses, ...className.split(" ")].join(" ");
     if (element === this.selectedElement) {
       const info = this.extractElementInfo(element);
@@ -724,10 +591,7 @@ var VisualEditController = class {
   }
   updateElementStyle(element, styles) {
     for (const [prop, value] of Object.entries(styles)) {
-      element.style.setProperty(
-        prop.replace(/([A-Z])/g, "-$1").toLowerCase(),
-        value
-      );
+      element.style.setProperty(prop.replace(/([A-Z])/g, "-$1").toLowerCase(), value);
     }
     if (element === this.selectedElement) {
       const info = this.extractElementInfo(element);
@@ -741,85 +605,42 @@ var VisualEditController = class {
       element.setAttribute(attr.name, attr.value);
     }
   }
+  // ========== Inline Text Editing (contenteditable) ==========
   enterTextEditMode() {
-    if (!this.selectedElement || !this.textEditBox || !this.textEditContainer) return;
+    if (!this.selectedElement) return;
     this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
     this.isTextEditing = true;
-    this.isSaving = false;
-    const rect = this.selectedElement.getBoundingClientRect();
-    this.textEditContainer.style.left = `${rect.left}px`;
-    this.textEditContainer.style.top = `${rect.bottom + 8}px`;
-    this.textEditContainer.style.minWidth = `${Math.max(250, rect.width)}px`;
-    if (rect.bottom + 60 > window.innerHeight) {
-      this.textEditContainer.style.top = `${rect.top - 52}px`;
-    }
-    this.textEditBox.value = this.originalTextBeforeEdit;
-    this.textEditContainer.style.display = "block";
-    if (this.textLoadingIndicator) {
-      this.textLoadingIndicator.style.display = "none";
-    }
-    this.textEditBox.focus();
-    this.textEditBox.select();
-    this.highlightOverlay.style.borderColor = "#8b5cf6";
+    this.selectedElement.contentEditable = "true";
+    this.selectedElement.style.outline = "2px solid #8b5cf6";
+    this.selectedElement.style.cursor = "text";
+    this.selectedElement.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(this.selectedElement);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    this.selectedElement.addEventListener("blur", this.handleTextEditBlur);
+    this.selectedElement.addEventListener("keydown", this.handleTextEditKeydown);
+    console.log("[visual-edit-script] Entered text edit mode");
   }
-  exitTextEditMode() {
-    if (!this.textEditContainer) return;
+  exitTextEditMode(commit) {
+    if (!this.selectedElement || !this.isTextEditing) return;
+    this.selectedElement.removeEventListener("blur", this.handleTextEditBlur);
+    this.selectedElement.removeEventListener("keydown", this.handleTextEditKeydown);
+    this.selectedElement.contentEditable = "false";
+    this.selectedElement.style.outline = "";
+    this.selectedElement.style.cursor = "";
+    const newText = this.getDirectTextContent(this.selectedElement);
+    if (commit && newText !== this.originalTextBeforeEdit) {
+      console.log("[visual-edit-script] Text changed, sending update");
+      this.postMessage("ELEMENT_UPDATED", this.extractElementInfo(this.selectedElement));
+    } else if (!commit) {
+      this.updateElementText(this.selectedElement, this.originalTextBeforeEdit);
+    }
     this.isTextEditing = false;
-    this.isSaving = false;
-    this.textEditContainer.style.display = "none";
-    this.highlightOverlay.style.borderColor = "#3b82f6";
+    console.log("[visual-edit-script] Exited text edit mode");
   }
-  // 显示保存中状态
-  showSavingState() {
-    if (!this.textLoadingIndicator) return;
-    this.isSaving = true;
-    this.textLoadingIndicator.style.display = "flex";
-  }
-  // 隐藏保存中状态
-  hideSavingState() {
-    if (!this.textLoadingIndicator) return;
-    this.isSaving = false;
-    this.textLoadingIndicator.style.display = "none";
-  }
-  // 确认文本编辑并发送保存信号
-  confirmTextEdit() {
-    console.log("[visual-edit-script] confirmTextEdit called", {
-      hasSelectedElement: !!this.selectedElement,
-      hasTextEditBox: !!this.textEditBox,
-      isSaving: this.isSaving,
-      isTextEditing: this.isTextEditing
-    });
-    if (!this.selectedElement || !this.textEditBox || this.isSaving) {
-      console.log("[visual-edit-script] confirmTextEdit early return");
-      return;
-    }
-    const currentText = this.textEditBox.value;
-    const originalText = this.originalTextBeforeEdit;
-    console.log("[visual-edit-script] confirmTextEdit values", {
-      currentText,
-      originalText,
-      areEqual: currentText === originalText
-    });
-    if (currentText === originalText) {
-      console.log("[visual-edit-script] Text unchanged, closing");
-      this.exitTextEditMode();
-      return;
-    }
-    console.log("[visual-edit-script] Showing saving state and sending TEXT_EDIT_CONFIRMED");
-    this.showSavingState();
-    this.updateElementText(this.selectedElement, currentText);
-    this.postMessage("TEXT_EDIT_CONFIRMED", {
-      jsxId: this.selectedElement.getAttribute("data-jsx-id"),
-      text: currentText,
-      originalText,
-      tagName: this.selectedElement.tagName.toLowerCase(),
-      className: this.selectedElement.className,
-      jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
-      jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
-      jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
-    });
-  }
-  // ========== 模式控制 ==========
+  // ========== Mode Control ==========
   enableEditMode() {
     this.isEditMode = true;
     document.body.style.cursor = "crosshair";
@@ -831,12 +652,10 @@ var VisualEditController = class {
     this.deselectElement();
     this.postMessage("EDIT_MODE_DISABLED", null);
   }
-  // ========== HTML 导出 ==========
+  // ========== HTML Export ==========
   sendFullHtml() {
     const clone = document.body.cloneNode(true);
-    const editorElements = clone.querySelectorAll(
-      '[id^="__visual_edit_"]'
-    );
+    const editorElements = clone.querySelectorAll('[id^="__visual_edit_"]');
     editorElements.forEach((el) => el.remove());
     clone.querySelectorAll("[contenteditable]").forEach((el) => {
       el.removeAttribute("contenteditable");
@@ -852,7 +671,7 @@ ${clone.innerHTML}
 </html>`;
     this.postMessage("FULL_HTML", { html });
   }
-  // ========== 通信 ==========
+  // ========== Communication ==========
   postMessage(type, payload) {
     console.log(`[visual-edit-script] postMessage: type=${type}`, payload);
     try {
