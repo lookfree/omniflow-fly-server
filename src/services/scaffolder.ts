@@ -113,7 +113,8 @@ function slugify(str: string): string {
 }
 
 function generatePackageJson(config: ProjectConfig): string {
-  const jsxTaggerDependency = process.env.JSX_TAGGER_DEP || '@omniflow/vite-plugin-jsx-tagger';
+  // In Docker container, use local file path to the built package
+  const jsxTaggerDependency = process.env.JSX_TAGGER_DEP || 'file:/app/packages/vite-plugin-jsx-tagger';
   const pkg = {
     name: slugify(config.projectName),
     private: true,
