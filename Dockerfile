@@ -27,9 +27,12 @@ WORKDIR /app
 # 创建数据目录
 RUN mkdir -p /data/sites
 
+# Pre-build template with all dependencies (避免运行时 bun install)
+RUN bun run scripts/prebuild-template.ts
+
 # 暴露端口：主服务 + Vite Dev Server 端口范围
 EXPOSE 3000
-EXPOSE 5200-5219
+EXPOSE 5200-5250
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

@@ -18,6 +18,8 @@ const IS_HTTPS = FLY_PUBLIC_HOST.includes('fly.dev') || process.env.FLY_HTTPS ==
 
 const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 const TEMPLATE_ID = '_template';
+// Pre-built template location (created during Docker build)
+const PREBUILT_TEMPLATE_DIR = '/app/template';
 
 export class TemplateManager {
   private templatePath = join(DATA_DIR, TEMPLATE_ID);
@@ -47,10 +49,33 @@ export class TemplateManager {
       this.templateReady = true;
       return;
     } catch {
-      // Template doesn't exist, create it
+      // Template doesn't exist, try to copy from pre-built
     }
 
     try {
+      // Check if pre-built template exists (from Docker build)
+      const prebuiltNodeModules = join(PREBUILT_TEMPLATE_DIR, 'node_modules');
+      let hasPrebuilt = false;
+      try {
+        await access(prebuiltNodeModules, constants.F_OK);
+        hasPrebuilt = true;
+      } catch {
+        // No pre-built template
+      }
+
+      if (hasPrebuilt) {
+        // Fast path: copy pre-built template (includes node_modules)
+        console.log('[TemplateManager] Copying pre-built template...');
+        await mkdir(DATA_DIR, { recursive: true });
+        await cp(PREBUILT_TEMPLATE_DIR, this.templatePath, { recursive: true });
+        console.log(`[TemplateManager] Pre-built template copied in ${Date.now() - start}ms`);
+        this.templateReady = true;
+        return;
+      }
+
+      // Fallback: generate template from scratch
+      console.log('[TemplateManager] No pre-built template, generating from scratch...');
+
       // Create template directory
       await mkdir(this.templatePath, { recursive: true });
 
@@ -126,6 +151,18 @@ export class TemplateManager {
       // Directory may not exist, ignore
     }
 
+    // Verify template exists before copying, reinitialize if needed
+    const templateNodeModules = join(this.templatePath, 'node_modules');
+    try {
+      await access(templateNodeModules, constants.F_OK);
+    } catch {
+      // Template was deleted or corrupted, reinitialize from pre-built
+      console.log('[TemplateManager] Template missing, reinitializing from pre-built...');
+      this.templateReady = false;
+      this.initPromise = null;
+      await this.initialize();
+    }
+
     // Copy entire template directory (includes node_modules)
     // Symlinks are preserved - they point to /app/packages/vite-plugin-jsx-tagger
     // which exists in the Docker image
@@ -165,7 +202,7 @@ export class TemplateManager {
 
     const config = `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+import { jsxTaggerPlugin } from '@lookfree0822/vite-plugin-jsx-tagger';
 
 export default defineConfig({
   base: '${basePath}',

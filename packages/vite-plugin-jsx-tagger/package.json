@@ -1,6 +1,9 @@
 {
-  "name": "vite-plugin-jsx-tagger",
+  "name": "@lookfree0822/vite-plugin-jsx-tagger",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Vite plugin for JSX element tagging with stable IDs for visual editing",
   "type": "module",
   "main": "./dist/index.js",

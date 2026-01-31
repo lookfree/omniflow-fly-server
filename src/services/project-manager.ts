@@ -36,14 +36,64 @@ export class ProjectManager {
       // Copy from template (~3-5s, includes node_modules)
       await templateManager.createFromTemplate(config.projectId);
 
-      // Write user's source code files
+      // Write user's source code files (skip config files from template)
       if (config.files && config.files.length > 0) {
+        // Skip files that should use template's version (have correct dependencies & config)
+        const skipFiles = [
+          'package.json',
+          'vite.config.ts',
+          'bun.lock',
+          'bun.lockb',
+          'postcss.config.js',
+          'postcss.config.cjs',
+          'postcss.config.mjs',
+          'tailwind.config.js',
+          'tailwind.config.ts',
+          'tailwind.config.mjs',
+          'tsconfig.json',
+          'tsconfig.node.json',
+        ];
+        let writtenCount = 0;
+        const skippedFiles: string[] = [];
+        let userPackageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> } | null = null;
+
         for (const file of config.files) {
+          // Skip config files to preserve template's correct dependency setup
+          if (skipFiles.includes(file.path)) {
+            skippedFiles.push(file.path);
+            // Extract user's package.json for dependency merging
+            if (file.path === 'package.json') {
+              try {
+                userPackageJson = JSON.parse(file.content);
+              } catch {
+                // Invalid JSON, ignore
+              }
+            }
+            continue;
+          }
           const filePath = join(projectPath, file.path);
           await mkdir(dirname(filePath), { recursive: true });
           await writeFile(filePath, file.content, 'utf-8');
+          writtenCount++;
         }
-        console.log(`[ProjectManager] Wrote ${config.files.length} user files`);
+
+        // Merge user's extra dependencies into template's package.json
+        if (userPackageJson) {
+          const extraDeps = await this.mergeUserDependencies(projectPath, userPackageJson);
+          if (extraDeps.length > 0) {
+            console.log(`[ProjectManager] Installing extra user dependencies: ${extraDeps.join(', ')}`);
+            // Use ensure() instead of install() to force bun install even if node_modules exists
+            await dependencyManager.ensure(projectPath);
+          }
+        }
+
+        // Log skipped files for future optimization
+        if (skippedFiles.length > 0) {
+          console.log(`[ProjectManager] Wrote ${writtenCount} user files`);
+          console.log(`[ProjectManager] Skipped config files (using template): ${skippedFiles.join(', ')}`);
+        } else {
+          console.log(`[ProjectManager] Wrote ${writtenCount} user files`);
+        }
       } else {
         // Write default App.tsx
         const appPath = join(projectPath, 'src', 'App.tsx');
@@ -305,6 +355,85 @@ export class ProjectManager {
     // Security check: Prevent path traversal
     const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, '');
     return join(DATA_DIR, safeId);
+  }
+
+  /**
+   * Merge user's extra dependencies into template's package.json
+   * Returns list of extra dependencies that were added
+   */
+  private async mergeUserDependencies(
+    projectPath: string,
+    userPkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+  ): Promise<string[]> {
+    const pkgPath = join(projectPath, 'package.json');
+    const extraDeps: string[] = [];
+
+    try {
+      const templatePkg = JSON.parse(await readFile(pkgPath, 'utf-8'));
+
+      // Template's core dependencies that should not be overwritten
+      // These are pre-installed in the template for fast startup
+      const coreDeps = new Set([
+        // Core React
+        'react', 'react-dom', 'react-router-dom',
+        // Styling
+        'clsx', 'tailwind-merge', 'class-variance-authority', 'tw-animate-css',
+        // All Radix UI primitives
+        '@radix-ui/react-accordion', '@radix-ui/react-alert-dialog', '@radix-ui/react-aspect-ratio',
+        '@radix-ui/react-avatar', '@radix-ui/react-checkbox', '@radix-ui/react-collapsible',
+        '@radix-ui/react-context-menu', '@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu',
+        '@radix-ui/react-hover-card', '@radix-ui/react-icons', '@radix-ui/react-label',
+        '@radix-ui/react-menubar', '@radix-ui/react-navigation-menu', '@radix-ui/react-popover',
+        '@radix-ui/react-progress', '@radix-ui/react-radio-group', '@radix-ui/react-scroll-area',
+        '@radix-ui/react-select', '@radix-ui/react-separator', '@radix-ui/react-slider',
+        '@radix-ui/react-slot', '@radix-ui/react-switch', '@radix-ui/react-tabs',
+        '@radix-ui/react-toast', '@radix-ui/react-toggle', '@radix-ui/react-toggle-group',
+        '@radix-ui/react-tooltip',
+        // Common shadcn/ui dependencies
+        'lucide-react', 'cmdk', 'sonner', 'vaul', 'input-otp',
+        'embla-carousel-react', 'react-resizable-panels', 'react-day-picker', 'recharts',
+        // Form & validation
+        'react-hook-form', '@hookform/resolvers', 'zod',
+        // State & utilities
+        'zustand', 'date-fns', 'axios', 'framer-motion', 'next-themes',
+        // Dev dependencies
+        '@babel/core', '@babel/plugin-syntax-typescript',
+        '@types/react', '@types/react-dom', '@vitejs/plugin-react',
+        '@tailwindcss/postcss', '@tailwindcss/vite', '@tailwindcss/typography', 'tailwindcss', 'postcss-import',
+        'typescript', 'vite', '@lookfree0822/vite-plugin-jsx-tagger',
+      ]);
+
+      // Merge user's dependencies (excluding core)
+      if (userPkg.dependencies) {
+        for (const [name, version] of Object.entries(userPkg.dependencies)) {
+          if (!coreDeps.has(name) && !templatePkg.dependencies?.[name]) {
+            templatePkg.dependencies = templatePkg.dependencies || {};
+            templatePkg.dependencies[name] = version;
+            extraDeps.push(name);
+          }
+        }
+      }
+
+      // Merge user's devDependencies (excluding core)
+      if (userPkg.devDependencies) {
+        for (const [name, version] of Object.entries(userPkg.devDependencies)) {
+          if (!coreDeps.has(name) && !templatePkg.devDependencies?.[name]) {
+            templatePkg.devDependencies = templatePkg.devDependencies || {};
+            templatePkg.devDependencies[name] = version;
+            extraDeps.push(`${name} (dev)`);
+          }
+        }
+      }
+
+      // Write merged package.json if there are extra deps
+      if (extraDeps.length > 0) {
+        await writeFile(pkgPath, JSON.stringify(templatePkg, null, 2), 'utf-8');
+      }
+    } catch (error) {
+      console.error('[ProjectManager] Failed to merge dependencies:', error);
+    }
+
+    return extraDeps;
   }
 
   /**

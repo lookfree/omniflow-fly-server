@@ -12,7 +12,7 @@ import { dependencyManager } from './dependency-manager';
 
 const DEFAULT_CONFIG: ViteManagerConfig = {
   basePort: 5200,
-  maxInstances: 20,
+  maxInstances: 50,
   idleTimeout: 30 * 60 * 1000,  // 30 minutes
   startupTimeout: 60 * 1000,    // 60 seconds
 };
@@ -72,6 +72,9 @@ export class ViteDevServerManager extends EventEmitter {
 
       // Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
       await this.ensureViteConfig(projectId, projectPath);
+
+      // Ensure postcss.config.js has postcss-import for CSS npm package imports
+      await this.ensurePostcssConfig(projectPath);
 
       // Try to start Vite (fast path - no bun install if template is correct)
       try {
@@ -222,24 +225,24 @@ export class ViteDevServerManager extends EventEmitter {
    */
   private async ensureJsxTaggerDependency(projectPath: string): Promise<void> {
     const packageJsonPath = join(projectPath, 'package.json');
-    const jsxTaggerDep = process.env.JSX_TAGGER_DEP || 'file:/app/packages/vite-plugin-jsx-tagger';
+    const jsxTaggerDep = process.env.JSX_TAGGER_DEP || '@lookfree0822/vite-plugin-jsx-tagger';
 
     try {
       const content = await readFile(packageJsonPath, 'utf-8');
       const packageJson = JSON.parse(content);
 
       // Check if vite-plugin-jsx-tagger dependency already exists
-      const hasDep = packageJson.dependencies?.['vite-plugin-jsx-tagger'] ||
-                     packageJson.devDependencies?.['vite-plugin-jsx-tagger'];
+      const hasDep = packageJson.dependencies?.['@lookfree0822/vite-plugin-jsx-tagger'] ||
+                     packageJson.devDependencies?.['@lookfree0822/vite-plugin-jsx-tagger'];
 
       if (!hasDep) {
-        console.log(`[ViteManager] Adding vite-plugin-jsx-tagger dependency to package.json`);
+        console.log(`[ViteManager] Adding @lookfree0822/vite-plugin-jsx-tagger dependency to package.json`);
 
         // Add to devDependencies
         if (!packageJson.devDependencies) {
           packageJson.devDependencies = {};
         }
-        packageJson.devDependencies['vite-plugin-jsx-tagger'] = jsxTaggerDep;
+        packageJson.devDependencies['@lookfree0822/vite-plugin-jsx-tagger'] = jsxTaggerDep;
 
         await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
 
@@ -320,7 +323,7 @@ export class ViteDevServerManager extends EventEmitter {
       // Build new clean vite.config.ts
       const newConfig = `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+import { jsxTaggerPlugin } from '@lookfree0822/vite-plugin-jsx-tagger';
 ${additionalImports.join('\n')}${additionalImports.length > 0 ? '\n' : ''}
 export default defineConfig({
   base: '${basePath}',
@@ -368,6 +371,47 @@ export default defineConfig({
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
       // Don't block startup, continue trying
+    }
+  }
+
+  /**
+   * Ensure postcss.config.js has postcss-import plugin for npm package @imports
+   * This is a fallback fix for projects that don't have the latest template
+   */
+  private async ensurePostcssConfig(projectPath: string): Promise<void> {
+    const configPath = join(projectPath, 'postcss.config.js');
+
+    try {
+      const content = await readFile(configPath, 'utf-8');
+
+      // Check if postcss-import is already configured
+      if (content.includes('postcss-import')) {
+        return;
+      }
+
+      console.log(`[ViteManager] Adding postcss-import to postcss.config.js`);
+
+      // Write updated config with postcss-import
+      const newConfig = `export default {
+  plugins: {
+    'postcss-import': {},
+    '@tailwindcss/postcss': {},
+  },
+};
+`;
+      await writeFile(configPath, newConfig, 'utf-8');
+      console.log(`[ViteManager] Updated postcss.config.js with postcss-import`);
+    } catch (error) {
+      // If file doesn't exist, create it
+      console.log(`[ViteManager] Creating postcss.config.js with postcss-import`);
+      const newConfig = `export default {
+  plugins: {
+    'postcss-import': {},
+    '@tailwindcss/postcss': {},
+  },
+};
+`;
+      await writeFile(configPath, newConfig, 'utf-8');
     }
   }
 

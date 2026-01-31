@@ -114,7 +114,7 @@ function slugify(str: string): string {
 
 function generatePackageJson(config: ProjectConfig): string {
   // In Docker container, use local file path to the built package
-  const jsxTaggerDependency = process.env.JSX_TAGGER_DEP || 'file:/app/packages/vite-plugin-jsx-tagger';
+  const jsxTaggerDependency = process.env.JSX_TAGGER_DEP || '@lookfree0822/vite-plugin-jsx-tagger';
   const pkg = {
     name: slugify(config.projectName),
     private: true,
@@ -148,7 +148,7 @@ function generatePackageJson(config: ProjectConfig): string {
       'tailwindcss': '^3.3.5',
       'typescript': '^5.2.2',
       'vite': '^5.0.0',
-      'vite-plugin-jsx-tagger': jsxTaggerDependency,
+      '@lookfree0822/vite-plugin-jsx-tagger': jsxTaggerDependency,
     },
   };
 
@@ -164,7 +164,7 @@ function generateViteConfig(config: ProjectConfig): string {
 
   return `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+import { jsxTaggerPlugin } from '@lookfree0822/vite-plugin-jsx-tagger';
 
 export default defineConfig({
   base: '${basePath}',
