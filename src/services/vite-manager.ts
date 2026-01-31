@@ -212,9 +212,16 @@ export class ViteDevServerManager extends EventEmitter {
       const hasCorrectHmr = originalContent.includes(`path: '/hmr/${projectId}'`);
       const hasJsxTagger = originalContent.includes('jsxTaggerPlugin');
 
-      // If config is already correct, skip regeneration
+      // If config is already correct, just ensure dependencies are valid (run install, not reinstall)
       if (hasCorrectBase && hasCorrectHmr && hasJsxTagger) {
-        console.log(`[ViteManager] vite.config.ts already configured correctly, skipping regeneration`);
+        console.log(`[ViteManager] vite.config.ts already configured correctly, ensuring dependencies...`);
+        // Always run bun install to fix any broken symlinks after template copy
+        const result = await dependencyManager.reinstall(projectPath);
+        if (!result.success) {
+          console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
+        } else {
+          console.log(`[ViteManager] Dependencies verified/fixed`);
+        }
         return;
       }
 
