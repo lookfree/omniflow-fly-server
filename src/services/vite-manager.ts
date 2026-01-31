@@ -125,16 +125,61 @@ export class ViteDevServerManager extends EventEmitter {
 
     instance.process = proc;
 
+    // Track if process exited early
+    let processExited = false;
+    let exitCode: number | null = null;
+    const exitHandler = (code: number | null) => {
+      processExited = true;
+      exitCode = code;
+    };
+    proc.on('exit', exitHandler);
+
     // Listen to output
     this.setupProcessListeners(instance);
 
-    // Wait for server to be ready
-    await this.waitForReady(port);
+    // Wait for server to be ready (with early exit detection)
+    await this.waitForReadyWithExitCheck(port, () => processExited, () => exitCode);
+
+    // Remove the exit handler we added (setupProcessListeners already handles this)
+    proc.removeListener('exit', exitHandler);
 
     instance.status = 'running';
     this.emit('started', { projectId, port });
 
     console.log(`[ViteManager] Started: ${projectId} on port ${port}`);
+  }
+
+  /**
+   * Wait for Vite to be ready, but fail immediately if process exits
+   */
+  private async waitForReadyWithExitCheck(
+    port: number,
+    hasExited: () => boolean,
+    getExitCode: () => number | null
+  ): Promise<void> {
+    const start = Date.now();
+    const quickTimeout = 10000; // 10 seconds for fast path
+
+    while (Date.now() - start < quickTimeout) {
+      // Check if process exited
+      if (hasExited()) {
+        throw new Error(`Vite process exited with code ${getExitCode()}`);
+      }
+
+      try {
+        const response = await fetch(`http://localhost:${port}`, {
+          method: 'HEAD',
+        });
+        if (response.ok || response.status === 404) {
+          return;
+        }
+      } catch {
+        // Server not ready yet, continue waiting
+      }
+      await new Promise(r => setTimeout(r, 100)); // Faster polling
+    }
+
+    throw new Error(`Vite startup timeout after ${quickTimeout}ms`);
   }
 
   /**
