@@ -5,7 +5,7 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, rm, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import type { ViteInstance, ViteManagerConfig, ViteStatus, LogEvent, ExitEvent } from '../types';
 import { dependencyManager } from './dependency-manager';
@@ -23,6 +23,10 @@ export class ViteDevServerManager extends EventEmitter {
   private config: ViteManagerConfig;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private bunBinary = process.env.BUN_BINARY || process.execPath;
+  // Track projects being processed (creating, starting) to prevent accidental cleanup
+  private activeProjects: Set<string> = new Set();
+  // Track projects being cleaned up to prevent concurrent cleanup
+  private cleaningProjects: Set<string> = new Set();
 
   constructor(config: Partial<ViteManagerConfig> = {}) {
     super();
@@ -38,68 +42,91 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
+   * Mark a project as active (being created/processed)
+   * This prevents the project from being cleaned up during creation
+   */
+  markProjectActive(projectId: string): void {
+    this.activeProjects.add(projectId);
+  }
+
+  /**
+   * Unmark a project as active
+   */
+  unmarkProjectActive(projectId: string): void {
+    this.activeProjects.delete(projectId);
+  }
+
+  /**
    * Start Vite Dev Server for a project
    */
   async start(projectId: string, projectPath: string): Promise<ViteInstance> {
-    // If already running, update active time and return
-    const existing = this.instances.get(projectId);
-    if (existing && existing.status === 'running') {
-      existing.lastActive = new Date();
-      return existing;
-    }
-
-    // Allocate port
-    const port = this.allocatePort();
-    if (port === null) {
-      throw new Error('No available ports. Max instances reached.');
-    }
-
-    // Create instance
-    const instance: ViteInstance = {
-      projectId,
-      port,
-      process: null as unknown as ChildProcess,
-      startedAt: new Date(),
-      lastActive: new Date(),
-      status: 'starting',
-    };
-
-    this.instances.set(projectId, instance);
+    // Mark as active to prevent cleanup during startup
+    this.activeProjects.add(projectId);
 
     try {
-      // Ensure jsx-tagger dependency is installed
-      await this.ensureJsxTaggerDependency(projectPath);
-
-      // Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
-      await this.ensureViteConfig(projectId, projectPath);
-
-      // Ensure postcss.config.js has postcss-import for CSS npm package imports
-      await this.ensurePostcssConfig(projectPath);
-
-      // Try to start Vite (fast path - no bun install if template is correct)
-      try {
-        await this.startViteProcess(instance, projectPath, port);
-        return instance;
-      } catch (firstError) {
-        // First attempt failed, try fixing dependencies and retry
-        console.log(`[ViteManager] First start attempt failed, fixing dependencies...`);
-        const result = await dependencyManager.ensure(projectPath);
-        if (!result.success) {
-          console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
-          throw firstError;
-        }
-        console.log(`[ViteManager] Dependencies fixed in ${result.duration}ms, retrying...`);
-
-        // Retry with fixed dependencies
-        await this.startViteProcess(instance, projectPath, port);
-        return instance;
+      // If already running, update active time and return
+      const existing = this.instances.get(projectId);
+      if (existing && existing.status === 'running') {
+        existing.lastActive = new Date();
+        return existing;
       }
-    } catch (error) {
-      instance.status = 'error';
-      this.releasePort(port);
-      this.instances.delete(projectId);
-      console.error(`[ViteManager] Failed to start ${projectId}:`, error);
-      throw error;
+
+      // Allocate port
+      const port = this.allocatePort();
+      if (port === null) {
+        throw new Error('No available ports. Max instances reached.');
+      }
+
+      // Create instance
+      const instance: ViteInstance = {
+        projectId,
+        port,
+        process: null as unknown as ChildProcess,
+        startedAt: new Date(),
+        lastActive: new Date(),
+        status: 'starting',
+      };
+
+      this.instances.set(projectId, instance);
+
+      try {
+        // Ensure jsx-tagger dependency is installed
+        await this.ensureJsxTaggerDependency(projectPath);
+
+        // Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
+        await this.ensureViteConfig(projectId, projectPath);
+
+        // Ensure postcss.config.js has postcss-import for CSS npm package imports
+        await this.ensurePostcssConfig(projectPath);
+
+        // Try to start Vite (fast path - no bun install if template is correct)
+        try {
+          await this.startViteProcess(instance, projectPath, port);
+          return instance;
+        } catch (firstError) {
+          // First attempt failed, try fixing dependencies and retry
+          console.log(`[ViteManager] First start attempt failed, fixing dependencies...`);
+          const result = await dependencyManager.ensure(projectPath);
+          if (!result.success) {
+            console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
+            throw firstError;
+          }
+          console.log(`[ViteManager] Dependencies fixed in ${result.duration}ms, retrying...`);
+
+          // Retry with fixed dependencies
+          await this.startViteProcess(instance, projectPath, port);
+          return instance;
+        }
+      } catch (error) {
+        instance.status = 'error';
+        this.releasePort(port);
+        this.instances.delete(projectId);
+        console.error(`[ViteManager] Failed to start ${projectId}:`, error);
+        throw error;
+      }
+    } finally {
+      // Always unmark after startup completes (success or failure)
+      this.activeProjects.delete(projectId);
     }
   }
 
@@ -565,17 +592,169 @@ export default defineConfig({
 
   private cleanupIdle(): void {
     const now = Date.now();
+    const CLEANUP_THRESHOLD = 10 * 60 * 1000; // 10 minutes - cleanup project files
 
+    // Cleanup running instances that are idle
     for (const [projectId, instance] of this.instances) {
+      // Safety: Skip if project is being processed
+      if (this.activeProjects.has(projectId)) continue;
+      // Safety: Skip if already being cleaned up
+      if (this.cleaningProjects.has(projectId)) continue;
+
       if (instance.status === 'running') {
         const idleTime = now - instance.lastActive.getTime();
-        if (idleTime > this.config.idleTimeout) {
-          console.log(`[ViteManager] Stopping idle instance: ${projectId} (idle for ${Math.round(idleTime / 1000)}s)`);
-          this.stop(projectId).catch(err => {
-            console.error(`[ViteManager] Failed to stop idle instance ${projectId}:`, err);
+        if (idleTime > CLEANUP_THRESHOLD) {
+          console.log(`[ViteManager] Stopping idle instance and cleaning up: ${projectId} (idle for ${Math.round(idleTime / 1000)}s)`);
+          this.stopAndCleanup(projectId).catch(err => {
+            console.error(`[ViteManager] Failed to cleanup idle instance ${projectId}:`, err);
           });
         }
       }
+    }
+
+    // Also cleanup orphan project directories (no running Vite instance)
+    this.cleanupOrphanProjects(CLEANUP_THRESHOLD).catch(err => {
+      console.error(`[ViteManager] Failed to cleanup orphan projects:`, err);
+    });
+  }
+
+  /**
+   * Cleanup orphan project directories that have no running Vite instance
+   */
+  private async cleanupOrphanProjects(thresholdMs: number): Promise<void> {
+    const dataDir = process.env.DATA_DIR || '/data/sites';
+    const now = Date.now();
+
+    try {
+      const entries = await readdir(dataDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const projectId = entry.name;
+
+        // Safety: Skip if Vite is running for this project
+        if (this.instances.has(projectId)) continue;
+
+        // Safety: Skip if project is being processed (creating, starting)
+        if (this.activeProjects.has(projectId)) continue;
+
+        // Safety: Skip if already being cleaned up
+        if (this.cleaningProjects.has(projectId)) continue;
+
+        // Safety: Skip protected directories
+        if (!this.isSafeToCleanup(projectId)) continue;
+
+        const projectPath = join(dataDir, projectId);
+
+        // Safety: Verify it's a valid project directory (has package.json)
+        const isValidProject = await this.isValidProjectDir(projectPath);
+        if (!isValidProject) continue;
+
+        try {
+          // Use birthtime (creation time) for more accurate age calculation
+          const stats = await stat(projectPath);
+          const age = now - (stats.birthtimeMs || stats.mtimeMs);
+
+          // Cleanup if directory is older than threshold
+          if (age > thresholdMs) {
+            console.log(`[ViteManager] Cleaning up orphan project: ${projectId} (age: ${Math.round(age / 1000)}s)`);
+            this.cleaningProjects.add(projectId);
+            try {
+              await rm(projectPath, { recursive: true, force: true });
+              this.emit('cleanup', { projectId });
+            } finally {
+              this.cleaningProjects.delete(projectId);
+            }
+          }
+        } catch {
+          // Ignore stat errors
+        }
+      }
+    } catch {
+      // DATA_DIR may not exist yet
+    }
+  }
+
+  /**
+   * Check if a projectId is safe to cleanup (not a protected directory)
+   */
+  private isSafeToCleanup(projectId: string): boolean {
+    // Only allow alphanumeric, dash, underscore
+    const validPattern = /^[a-zA-Z0-9_-]+$/;
+    if (!validPattern.test(projectId)) {
+      return false;
+    }
+
+    // Protected directories that should never be deleted
+    const protectedDirs = new Set([
+      '_template',
+      'template',
+      'node_modules',
+      '.git',
+      '.cache',
+      'dist',
+      'build',
+    ]);
+
+    return !protectedDirs.has(projectId);
+  }
+
+  /**
+   * Check if directory is a valid project (has package.json)
+   */
+  private async isValidProjectDir(projectPath: string): Promise<boolean> {
+    try {
+      const pkgPath = join(projectPath, 'package.json');
+      const stats = await stat(pkgPath);
+      return stats.isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Stop Vite and cleanup project files
+   */
+  private async stopAndCleanup(projectId: string): Promise<void> {
+    // Safety: Skip if already being cleaned up
+    if (this.cleaningProjects.has(projectId)) {
+      console.log(`[ViteManager] Project ${projectId} is already being cleaned up, skipping`);
+      return;
+    }
+
+    // Mark as being cleaned up
+    this.cleaningProjects.add(projectId);
+
+    try {
+      // Stop Vite first
+      await this.stop(projectId);
+
+      // Safety: Validate projectId
+      const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!this.isSafeToCleanup(safeId)) {
+        console.warn(`[ViteManager] Refusing to cleanup protected directory: ${projectId}`);
+        return;
+      }
+
+      // Cleanup project files
+      const dataDir = process.env.DATA_DIR || '/data/sites';
+      const projectPath = join(dataDir, safeId);
+
+      // Safety: Verify it's a valid project directory
+      const isValidProject = await this.isValidProjectDir(projectPath);
+      if (!isValidProject) {
+        console.warn(`[ViteManager] Refusing to cleanup non-project directory: ${projectId}`);
+        return;
+      }
+
+      await rm(projectPath, { recursive: true, force: true });
+      console.log(`[ViteManager] Cleaned up project files: ${projectId}`);
+      this.emit('cleanup', { projectId });
+    } catch (error) {
+      console.error(`[ViteManager] Failed to cleanup project ${projectId}:`, error);
+    } finally {
+      this.cleaningProjects.delete(projectId);
     }
   }
 }
