@@ -12,6 +12,10 @@ import { join, dirname } from 'path';
 import { generateScaffold, generateDefaultAppTsx } from './scaffolder';
 import { dependencyManager } from './dependency-manager';
 
+// fly-server public domain for direct HMR WebSocket connection
+const FLY_PUBLIC_HOST = process.env.FLY_PUBLIC_HOST || 'omniflow-preview.fly.dev';
+const IS_HTTPS = FLY_PUBLIC_HOST.includes('fly.dev') || process.env.FLY_HTTPS === 'true';
+
 const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 const TEMPLATE_ID = '_template';
 
@@ -127,6 +131,9 @@ export class TemplateManager {
     // which exists in the Docker image
     await cp(this.templatePath, projectPath, { recursive: true });
 
+    // Generate correct vite.config.ts for this projectId (avoid bun install later)
+    await this.writeViteConfig(projectPath, projectId);
+
     console.log(
       `[TemplateManager] Template copied in ${Date.now() - start}ms`
     );
@@ -145,6 +152,54 @@ export class TemplateManager {
    */
   getTemplatePath(): string {
     return this.templatePath;
+  }
+
+  /**
+   * Write correct vite.config.ts for a specific projectId
+   * This ensures the project can start immediately without bun install
+   */
+  private async writeViteConfig(projectPath: string, projectId: string): Promise<void> {
+    const configPath = join(projectPath, 'vite.config.ts');
+    const idPrefix = projectId.slice(0, 8);
+    const basePath = `/p/${projectId}/`;
+
+    const config = `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+
+export default defineConfig({
+  base: '${basePath}',
+  plugins: [
+    // JSX Tagger must be before React plugin for visual editing
+    jsxTaggerPlugin({
+      idPrefix: '${idPrefix}',
+      removeInProduction: false,
+    }),
+    react(),
+  ],
+  server: {
+    host: true,
+    allowedHosts: 'all',
+    hmr: {
+      protocol: '${IS_HTTPS ? 'wss' : 'ws'}',
+      host: '${FLY_PUBLIC_HOST}',
+      clientPort: ${IS_HTTPS ? 443 : 3000},
+      path: '/hmr/${projectId}',
+      overlay: true,
+    },
+  },
+  build: {
+    sourcemap: true,
+  },
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
+  },
+});
+`;
+
+    await writeFile(configPath, config, 'utf-8');
   }
 
   /**

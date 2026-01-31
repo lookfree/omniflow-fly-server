@@ -73,32 +73,24 @@ export class ViteDevServerManager extends EventEmitter {
       // Ensure vite.config is properly configured (jsxTaggerPlugin, allowedHosts, base, hmr)
       await this.ensureViteConfig(projectId, projectPath);
 
-      // Start Vite process
-      const proc = spawn(this.bunBinary, [
-        'run', 'vite',
-        '--host', '0.0.0.0',
-        '--port', String(port),
-        '--strictPort',
-      ], {
-        cwd: projectPath,
-        env: { ...process.env, NODE_ENV: 'development' },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      // Try to start Vite (fast path - no bun install if template is correct)
+      try {
+        await this.startViteProcess(instance, projectPath, port);
+        return instance;
+      } catch (firstError) {
+        // First attempt failed, try fixing dependencies and retry
+        console.log(`[ViteManager] First start attempt failed, fixing dependencies...`);
+        const result = await dependencyManager.ensure(projectPath);
+        if (!result.success) {
+          console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
+          throw firstError;
+        }
+        console.log(`[ViteManager] Dependencies fixed in ${result.duration}ms, retrying...`);
 
-      instance.process = proc;
-
-      // Listen to output
-      this.setupProcessListeners(instance);
-
-      // Wait for server to be ready
-      await this.waitForReady(port);
-
-      instance.status = 'running';
-      this.emit('started', { projectId, port });
-
-      console.log(`[ViteManager] Started: ${projectId} on port ${port}`);
-
-      return instance;
+        // Retry with fixed dependencies
+        await this.startViteProcess(instance, projectPath, port);
+        return instance;
+      }
     } catch (error) {
       instance.status = 'error';
       this.releasePort(port);
@@ -106,6 +98,43 @@ export class ViteDevServerManager extends EventEmitter {
       console.error(`[ViteManager] Failed to start ${projectId}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Start Vite process and wait for it to be ready
+   */
+  private async startViteProcess(instance: ViteInstance, projectPath: string, port: number): Promise<void> {
+    const { projectId } = instance;
+
+    // Kill any existing process
+    if (instance.process && !instance.process.killed) {
+      instance.process.kill('SIGKILL');
+    }
+
+    // Start Vite process
+    const proc = spawn(this.bunBinary, [
+      'run', 'vite',
+      '--host', '0.0.0.0',
+      '--port', String(port),
+      '--strictPort',
+    ], {
+      cwd: projectPath,
+      env: { ...process.env, NODE_ENV: 'development' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    instance.process = proc;
+
+    // Listen to output
+    this.setupProcessListeners(instance);
+
+    // Wait for server to be ready
+    await this.waitForReady(port);
+
+    instance.status = 'running';
+    this.emit('started', { projectId, port });
+
+    console.log(`[ViteManager] Started: ${projectId} on port ${port}`);
   }
 
   /**
@@ -204,16 +233,9 @@ export class ViteDevServerManager extends EventEmitter {
       const hasCorrectHmr = originalContent.includes(`path: '/hmr/${projectId}'`);
       const hasJsxTagger = originalContent.includes('jsxTaggerPlugin');
 
-      // If config is already correct, just ensure dependencies are valid
+      // If config is already correct, skip bun install entirely (fast path)
       if (hasCorrectBase && hasCorrectHmr && hasJsxTagger) {
-        console.log(`[ViteManager] vite.config.ts already configured correctly, ensuring dependencies...`);
-        // Run bun install to fix any broken symlinks (faster than reinstall)
-        const result = await dependencyManager.ensure(projectPath);
-        if (!result.success) {
-          console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
-        } else {
-          console.log(`[ViteManager] Dependencies verified/fixed in ${result.duration}ms`);
-        }
+        console.log(`[ViteManager] vite.config.ts already configured correctly, skipping dependency check`);
         return;
       }
 
