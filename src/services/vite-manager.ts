@@ -5,7 +5,7 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { readFile, writeFile, rm } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type { ViteInstance, ViteManagerConfig, ViteStatus, LogEvent, ExitEvent } from '../types';
 import { dependencyManager } from './dependency-manager';
@@ -169,21 +169,13 @@ export class ViteDevServerManager extends EventEmitter {
 
         await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
 
-        // Delete node_modules and reinstall
-        console.log(`[ViteManager] Reinstalling dependencies...`);
-        const nodeModulesPath = join(projectPath, 'node_modules');
-        try {
-          await rm(nodeModulesPath, { recursive: true, force: true });
-        } catch {
-          // node_modules may not exist
-        }
-
-        // Use reinstall to force fresh installation after modifying package.json
-        const result = await dependencyManager.reinstall(projectPath);
+        // Install new dependency (bun install will add the new package)
+        console.log(`[ViteManager] Installing new dependency...`);
+        const result = await dependencyManager.ensure(projectPath);
         if (!result.success) {
           console.error(`[ViteManager] Failed to install dependencies:`, result.logs.join('\n'));
         } else {
-          console.log(`[ViteManager] Dependencies installed successfully`);
+          console.log(`[ViteManager] Dependencies installed in ${result.duration}ms`);
         }
       }
     } catch (error) {
@@ -212,15 +204,15 @@ export class ViteDevServerManager extends EventEmitter {
       const hasCorrectHmr = originalContent.includes(`path: '/hmr/${projectId}'`);
       const hasJsxTagger = originalContent.includes('jsxTaggerPlugin');
 
-      // If config is already correct, just ensure dependencies are valid (run install, not reinstall)
+      // If config is already correct, just ensure dependencies are valid
       if (hasCorrectBase && hasCorrectHmr && hasJsxTagger) {
         console.log(`[ViteManager] vite.config.ts already configured correctly, ensuring dependencies...`);
-        // Always run bun install to fix any broken symlinks after template copy
-        const result = await dependencyManager.reinstall(projectPath);
+        // Run bun install to fix any broken symlinks (faster than reinstall)
+        const result = await dependencyManager.ensure(projectPath);
         if (!result.success) {
           console.error(`[ViteManager] Dependency fix failed:`, result.logs.join('\n'));
         } else {
-          console.log(`[ViteManager] Dependencies verified/fixed`);
+          console.log(`[ViteManager] Dependencies verified/fixed in ${result.duration}ms`);
         }
         return;
       }
@@ -298,13 +290,13 @@ export default defineConfig({
       await writeFile(configPath, newConfig, 'utf-8');
       console.log(`[ViteManager] Regenerated vite.config.ts with base: ${basePath}, HMR config for ${flyPublicHost}`);
 
-      // Force reinstall dependencies only when config changed
-      console.log(`[ViteManager] Reinstalling dependencies after config update...`);
-      const result = await dependencyManager.reinstall(projectPath);
+      // Ensure dependencies are valid after config update
+      console.log(`[ViteManager] Ensuring dependencies after config update...`);
+      const result = await dependencyManager.ensure(projectPath);
       if (!result.success) {
         console.error(`[ViteManager] Dependency installation failed:`, result.logs.join('\n'));
       } else {
-        console.log(`[ViteManager] Dependencies installed successfully`);
+        console.log(`[ViteManager] Dependencies installed in ${result.duration}ms`);
       }
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);

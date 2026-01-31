@@ -194,6 +194,16 @@ export class DependencyManager {
   }
 
   /**
+   * Ensure dependencies are valid (run bun install without deleting node_modules)
+   * This fixes broken symlinks and missing packages without full reinstall
+   * Much faster than reinstall() when node_modules already exists
+   */
+  async ensure(projectPath: string): Promise<InstallResult> {
+    console.log(`[DependencyManager] Ensuring dependencies: ${projectPath}`);
+    return this.runInstall(projectPath);
+  }
+
+  /**
    * Check if dependencies are installed
    */
   async isInstalled(projectPath: string): Promise<boolean> {
